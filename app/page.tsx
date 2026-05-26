@@ -226,7 +226,7 @@ export default function Page() {
             Card Permissions
           </h1>
           <nav className="border-l border-[rgba(0,0,0,0.1)] flex flex-col gap-2">
-            <SidebarItem active={activeStep === 1} completed={!!agent} label="Create agent" />
+            <SidebarItem active={activeStep === 1} completed={!!agent} label="Register agent" />
             <SidebarItem active={activeStep === 2} completed={hasEnrolledCard} label="Link credit card" />
             <SidebarItem active={activeStep === 3} completed={orderIntents.length > 0} label="Allow payments" />
           </nav>
@@ -235,12 +235,12 @@ export default function Page() {
         {/* Content */}
         <div className="space-y-7">
 
-          {/* Step 1 — Create agent */}
+          {/* Step 1 — Register agent */}
           <div className="bg-white rounded-[10px] p-5">
             <StepHeader
               step="01"
-              title="Create agent"
-              subtitle="Create your agent to start allowing card payments."
+              title="Register agent"
+              subtitle="Link your agent to start allowing card payments."
             />
             <AgentSection
               agent={agent}
