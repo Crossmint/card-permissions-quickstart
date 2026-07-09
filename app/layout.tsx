@@ -13,7 +13,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={`antialiased font-sans ${geist.variable} ${manrope.variable}`}>
       <head>
-        <title>Card Permissions</title>
+        <title>Agent Cards</title>
       </head>
       <body>
         <Providers>
