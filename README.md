@@ -4,7 +4,7 @@
 <img width="200" alt="Image" src="https://github.com/user-attachments/assets/8b617791-cd37-4a5a-8695-a7c9018b7c70" />
 <br>
 <br>
-<h1>Card Permissions Quickstart</h1>
+<h1>Agent Cards Quickstart</h1>
 
 <div align="center">
 <a href="https://virtual-cards.demos-crossmint.com">Live Demo</a> | <a href="https://docs.crossmint.com/agents/overview">Docs</a> | <a href="https://www.crossmint.com/quickstarts">See all quickstarts</a>

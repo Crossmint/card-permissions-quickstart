@@ -223,7 +223,7 @@ export default function Page() {
         {/* Sidebar — absolutely positioned to the left of the centered content */}
         <aside className="absolute right-full top-[88px] pr-10 w-52 pt-1 -translate-x-24">
           <h1 className="font-[family-name:var(--font-heading)] font-medium text-[28px] leading-none tracking-[-0.84px] text-[#00150d] mb-8">
-            Card Permissions
+            Agent Cards
           </h1>
           <nav className="border-l border-[rgba(0,0,0,0.1)] flex flex-col gap-2">
             <SidebarItem active={activeStep === 1} completed={!!agent} label="Register agent" />
