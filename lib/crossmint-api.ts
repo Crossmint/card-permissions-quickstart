@@ -1,13 +1,11 @@
-"use server";
+"use client";
 
-// Server actions for all Crossmint API calls.
+// Browser-direct helpers for all Crossmint API calls.
 //
 // These endpoints (/payment-methods, /agents, /order-intents) are user-scoped
-// and Crossmint requires a client-side API key + user JWT to auth them — a
-// server key is rejected with 403. The server-action layer here is purely a
-// CORS proxy (the staging API doesn't accept direct browser fetches), not a
-// secrets boundary. The same NEXT_PUBLIC_* client key is also bundled to the
-// browser for the Crossmint React SDK in app/layout.tsx.
+// and require a client-side API key + user JWT. They run in the browser, where
+// the Origin header is sent automatically. The key is exposed to the client
+// intentionally, because these calls are meant to be made from the browser.
 
 import type {
   AgenticEnrollmentResponse,
@@ -19,7 +17,7 @@ import type {
 } from "@/lib/crossmint-types";
 
 const BASE_URL = "https://staging.crossmint.com/api/unstable";
-const API_KEY = process.env.NEXT_PUBLIC_CROSSMINT_CLIENT_API_KEY ?? "";
+const CROSSMINT_CLIENT_API_KEY = process.env.NEXT_PUBLIC_CROSSMINT_CLIENT_API_KEY ?? "";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function log(label: string, data: unknown) {
@@ -32,7 +30,7 @@ function log(label: string, data: unknown) {
 function authHeaders(jwt: string): HeadersInit {
   return {
     "Content-Type": "application/json",
-    "X-API-KEY": API_KEY,
+    "X-API-KEY": CROSSMINT_CLIENT_API_KEY,
     Authorization: `Bearer ${jwt}`,
   };
 }
@@ -252,6 +250,5 @@ export async function fetchCardCredentials(
   });
   if (!res.ok) throw new Error(`Failed to fetch card credentials (${res.status})`);
   const data = await res.json();
-  log(`POST /order-intents/${orderIntentId}/credentials → response`, data);
   return data;
 }
