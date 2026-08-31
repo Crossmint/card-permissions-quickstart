@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CreditCard, Loader2, Info, Plus, Check } from "lucide-react";
 import { DotsMenu } from "./dots-menu";
 import type { PaymentMethodResponse, AgenticEnrollmentResponse } from "@/lib/crossmint-types";
 import { ensureEnrollment } from "@/lib/crossmint-api";
+import { waitForActiveEnrollment } from "@/lib/wait-for-active-enrollment";
 import { EnrollmentVerificationStep } from "./enrollment-verification-step";
 
 function capitalize(s: string) {
@@ -33,24 +34,15 @@ export function SavedCardsList({
   onIssueCardPermission: (paymentMethodId: string) => void;
   onDeleteCard: (paymentMethodId: string) => Promise<void>;
   onAddCard?: () => void;
-  onEnrollmentComplete?: () => void;
+  onEnrollmentComplete?: () => void | Promise<void>;
   viewMode?: "ui" | "code";
 }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [enrollingId, setEnrollingId] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [pendingEnrollment, setPendingEnrollment] = useState<AgenticEnrollmentResponse | null>(null);
-  const [enrolledIds, setEnrolledIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setEnrolledIds((prev) => {
-      const next = new Set(prev);
-      for (const [pmId, status] of Object.entries(enrollmentStatuses)) {
-        if (status === "active") next.add(pmId);
-      }
-      return next;
-    });
-  }, [enrollmentStatuses]);
+  const [verifyError, setVerifyError] = useState<Record<string, string>>({});
 
   if (loading) {
     return (
@@ -87,23 +79,42 @@ export function SavedCardsList({
     }
   };
 
-  const markEnrolled = (pmId: string) => {
-    setEnrolledIds((prev) => {
-      const next = new Set(prev);
-      next.add(pmId);
+  const finishEnrollment = async (pmId: string) => {
+    setConfirmingId(pmId);
+    setVerifyError((prev) => {
+      const next = { ...prev };
+      delete next[pmId];
       return next;
     });
-    setVerifyingId(null);
-    setPendingEnrollment(null);
-    onEnrollmentComplete?.();
+    try {
+      await waitForActiveEnrollment(getJwt(), pmId);
+      setVerifyingId(null);
+      setPendingEnrollment(null);
+      await onEnrollmentComplete?.();
+    } catch (err) {
+      console.error("Verification did not become active:", err);
+      setVerifyError((prev) => ({
+        ...prev,
+        [pmId]: err instanceof Error ? err.message : "Verification did not finish. Please try again.",
+      }));
+      setVerifyingId(null);
+      setPendingEnrollment(null);
+    } finally {
+      setConfirmingId(null);
+    }
   };
 
   const handleEnroll = async (pmId: string) => {
     setEnrollingId(pmId);
+    setVerifyError((prev) => {
+      const next = { ...prev };
+      delete next[pmId];
+      return next;
+    });
     try {
       const res = await ensureEnrollment(getJwt(), pmId, email);
       if (res.status === "active") {
-        markEnrolled(pmId);
+        await onEnrollmentComplete?.();
       } else if (res.status === "pending") {
         setPendingEnrollment(res);
         setVerifyingId(pmId);
@@ -125,9 +136,10 @@ export function SavedCardsList({
         <>
         {cards.map((card) => {
           const pmId = card.paymentMethodId;
-          const isEnrolled = enrolledIds.has(pmId);
+          const isEnrolled = enrollmentStatuses[pmId] === "active";
           const isEnrolling = enrollingId === pmId;
           const isVerifying = verifyingId === pmId;
+          const isConfirming = confirmingId === pmId;
           const brand = card.card?.brand ? capitalize(card.card.brand) : "Card";
           const last4 = card.card?.last4 ?? "????";
           const expMonth = card.card?.expiration?.month ?? "";
@@ -163,18 +175,30 @@ export function SavedCardsList({
               </div>
 
               {!isEnrolled && (
-                <div className="flex items-center justify-between gap-3 pl-3 pr-2 py-2 rounded-md bg-[#F5FCF8] border border-[#DDF5E8]">
-                  <div className="flex items-center gap-2 text-xs text-[#03A14D]">
-                    <Info className="size-3.5 shrink-0 text-[#03A14D]" />
-                    <span>This card needs to be verified for agentic use before allowing payments.</span>
+                <div
+                  className={`flex items-center justify-between gap-3 pl-3 pr-2 py-2 rounded-md border ${
+                    verifyError[pmId]
+                      ? "bg-[#FDF2F2] border-[#F4C7C7]"
+                      : "bg-[#F5FCF8] border-[#DDF5E8]"
+                  }`}
+                >
+                  <div className={`flex items-center gap-2 text-xs ${verifyError[pmId] ? "text-[#B42318]" : "text-[#03A14D]"}`}>
+                    <Info className={`size-3.5 shrink-0 ${verifyError[pmId] ? "text-[#B42318]" : "text-[#03A14D]"}`} />
+                    <span>
+                      {isConfirming
+                        ? "Confirming verification with Crossmint..."
+                        : verifyError[pmId]
+                          ? verifyError[pmId]
+                          : "This card needs to be verified for agentic use before allowing payments."}
+                    </span>
                   </div>
                   <button
                     onClick={() => handleEnroll(pmId)}
-                    disabled={isEnrolling || isVerifying}
+                    disabled={isEnrolling || isVerifying || isConfirming}
                     className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                   >
-                    {isEnrolling && <Loader2 className="size-3.5 animate-spin" />}
-                    <span>Verify card</span>
+                    {(isEnrolling || isConfirming) && <Loader2 className="size-3.5 animate-spin" />}
+                    <span>{isConfirming ? "Confirming" : "Verify card"}</span>
                   </button>
                 </div>
               )}
@@ -182,8 +206,12 @@ export function SavedCardsList({
               {isVerifying && pendingEnrollment?.status === "pending" && (
                 <EnrollmentVerificationStep
                   enrollment={pendingEnrollment}
-                  message="Complete passkey verification to enable agentic payments..."
-                  onComplete={() => markEnrolled(pmId)}
+                  message={
+                    isConfirming
+                      ? "Mastercard UI closed. Waiting for Crossmint to mark the card verified..."
+                      : "Complete passkey verification to enable agentic payments..."
+                  }
+                  onComplete={() => finishEnrollment(pmId)}
                   onError={() => { setVerifyingId(null); setPendingEnrollment(null); }}
                   onCancel={() => { setVerifyingId(null); setPendingEnrollment(null); }}
                 />
