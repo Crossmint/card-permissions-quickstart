@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import {
@@ -11,41 +11,38 @@ import {
 } from "@stytch/nextjs";
 import { LandingPage } from "@/components/landing-page";
 
-// Stytch login config — Google OAuth. The redirect URL must match the one
-// registered in your Stytch dashboard: https://stytch.com/dashboard/redirect-urls
-// Derived from window.location.origin so it works on localhost, Vercel previews,
-// production, and custom domains without env vars.
-const redirectUrl =
-  typeof window !== "undefined"
-    ? `${window.location.origin}/login`
-    : "/login";
-
-const loginConfig = {
-  products: [Products.oauth],
-  oauthOptions: {
-    providers: [{ type: "google" as const }],
-    loginRedirectURL: redirectUrl,
-    signupRedirectURL: redirectUrl,
-  },
-};
-
 const loginPresentation = {
   theme: { "container-border": "transparent" },
 };
+
+function getLoginConfig() {
+  // Only called after Stytch has initialized, which happens on the client
+  // after hydration — so window is always available here.
+  const redirectUrl = `${window.location.origin}/login`;
+  return {
+    products: [Products.oauth],
+    oauthOptions: {
+      providers: [{ type: "google" as const }],
+      loginRedirectURL: redirectUrl,
+      signupRedirectURL: redirectUrl,
+    },
+  };
+}
+
+function getOAuthCallbackToken(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("stytch_token_type") === "oauth" ? params.get("token") : null;
+}
 
 // After Stytch redirects back with ?token=...&stytch_token_type=oauth,
 // exchange the token for a session and clean up the URL.
 function useStytchTokenAuth() {
   const stytch = useStytch();
-  const { user } = useStytchUser();
+  const { user, isInitialized } = useStytchUser();
 
-  const [token] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    const params = new URLSearchParams(window.location.search);
-    return params.get("stytch_token_type") === "oauth"
-      ? params.get("token")
-      : null;
-  });
+  // Read the callback token only after init so this is never evaluated during
+  // SSR/hydration (isInitialized is false on both the server and first paint).
+  const token = isInitialized ? getOAuthCallbackToken() : null;
 
   useEffect(() => {
     if (!token || user) return;
@@ -58,8 +55,16 @@ function useStytchTokenAuth() {
   return !!token && !user;
 }
 
+function LoginSpinner() {
+  return (
+    <div className="flex items-center justify-center min-h-dvh bg-[#F7F5F4]">
+      <Loader2 className="size-5 animate-spin text-[#05B959]" />
+    </div>
+  );
+}
+
 export default function LoginPage() {
-  const { user } = useStytchUser();
+  const { user, isInitialized } = useStytchUser();
   const authenticating = useStytchTokenAuth();
   const router = useRouter();
 
@@ -67,18 +72,17 @@ export default function LoginPage() {
     if (user) router.replace("/");
   }, [user, router]);
 
-  if (authenticating || user) {
-    return (
-      <div className="flex items-center justify-center min-h-dvh bg-[#F7F5F4]">
-        <Loader2 className="size-5 animate-spin text-[#05B959]" />
-      </div>
-    );
+  // isInitialized is false on the server and on the client's first paint,
+  // so this spinner is the only tree that hydrates. Auth-dependent UI
+  // (session user, OAuth token, window.location) is deferred until after.
+  if (!isInitialized || authenticating || user) {
+    return <LoginSpinner />;
   }
 
   return (
     <LandingPage>
       <div className="w-full max-w-md bg-white rounded-3xl border shadow-lg overflow-hidden flex items-center justify-center">
-        <StytchLogin config={loginConfig} presentation={loginPresentation} />
+        <StytchLogin config={getLoginConfig()} presentation={loginPresentation} />
       </div>
     </LandingPage>
   );
