@@ -1,0 +1,6 @@
+allowBuilds:
+  bigint-buffer: true
+  bufferutil: true
+  sharp: true
+  unrs-resolver: true
+  utf-8-validate: true
