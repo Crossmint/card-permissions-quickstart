@@ -106,7 +106,7 @@ function StepHeader({ step, title, subtitle }: { step: string; title: string; su
 
 export default function Page() {
   const stytch = useStytch();
-  const { user } = useStytchUser();
+  const { user, isInitialized } = useStytchUser();
   const { setJwt } = useCrossmint();
   const router = useRouter();
 
@@ -115,8 +115,10 @@ export default function Page() {
   const getJwt = () => stytch.session.getTokens()?.session_jwt ?? "";
 
   useEffect(() => {
-    if (!user) router.replace("/login");
-  }, [user, router]);
+    if (isInitialized && !user) {
+      router.replace("/login");
+    }
+  }, [isInitialized, user, router]);
 
   useEffect(() => {
     const tokens = stytch.session.getTokens();
@@ -153,8 +155,10 @@ export default function Page() {
   }, [stytch]);
 
   useEffect(() => {
-    if (user) fetchData();
-  }, [user, fetchData]);
+    if (isInitialized && user) {
+      void fetchData();
+    }
+  }, [isInitialized, user, fetchData]);
 
   const handleCreateAgent = async () => {
     setCreatingAgent(true);
@@ -223,7 +227,7 @@ export default function Page() {
         ? 3
         : 4;
 
-  if (!user) {
+  if (!isInitialized || !user) {
     return (
       <div className="flex items-center justify-center min-h-dvh bg-[#F7F5F4]">
         <Loader2 className="size-5 animate-spin text-[#05B959]" />
