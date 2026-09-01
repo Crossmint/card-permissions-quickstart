@@ -204,7 +204,8 @@ export function RevealCardDetails({
                   <div>
                     <div className="text-[#00150d]/50">Expires</div>
                     <div className="font-mono text-[#00150d]">
-                      {credentials.card.expirationMonth}/{credentials.card.expirationYear.slice(-2)}
+                      {String(credentials.card.expirationMonth).padStart(2, "0")}/
+                      {String(credentials.card.expirationYear).slice(-2)}
                     </div>
                   </div>
                   <div>

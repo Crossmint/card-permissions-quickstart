@@ -67,8 +67,8 @@ export type OrderIntentResponse =
 export type CardCredentials = {
   card: {
     number: string;
-    expirationMonth: string;
-    expirationYear: string;
+    expirationMonth: string | number;
+    expirationYear: string | number;
     cvc: string;
   };
   expiresAt: string;
