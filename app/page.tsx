@@ -6,7 +6,13 @@ import { Loader2, Copy, Check, LayoutList, Code2, Circle } from "lucide-react";
 import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
 import type { PaymentMethodResponse, AgentResponse, OrderIntentResponse } from "@/lib/crossmint-types";
-import { fetchAllData, createNewAgent, deleteAgent, removePaymentMethod } from "@/lib/crossmint-api";
+import {
+  fetchAllData,
+  fetchOrderIntent,
+  createNewAgent,
+  deleteAgent,
+  removePaymentMethod,
+} from "@/lib/crossmint-api";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
 import { IssueCardPermission } from "@/components/issue-card-permission";
@@ -189,20 +195,31 @@ export default function Page() {
       return [orderIntent, ...current];
     });
     setIssuingForCard(null);
-    void fetchData();
+    void fetchOrderIntent(getJwt(), orderIntent.orderIntentId)
+      .then((refreshedOrderIntent) => {
+        setOrderIntents((current) =>
+          current.map((intent) =>
+            intent.orderIntentId === refreshedOrderIntent.orderIntentId ? refreshedOrderIntent : intent,
+          ),
+        );
+      })
+      .catch((error) => {
+        console.error("Failed to refresh the new allowance:", error);
+      });
   };
 
   const hasEnrolledCard = Object.values(enrollmentStatuses).some((s) => s === "active");
   const agentOrderIntents = agent
     ? orderIntents.filter((orderIntent) => orderIntent.agentId === agent.agentId)
     : [];
+  const activeAgentOrderIntents = agentOrderIntents.filter((orderIntent) => orderIntent.phase === "active");
 
   // Determine which step is currently active for sidebar highlight
   const activeStep = !agent
     ? 1
     : savedCards.length === 0 || !hasEnrolledCard
       ? 2
-      : agentOrderIntents.length === 0
+      : activeAgentOrderIntents.length === 0
         ? 3
         : 4;
 
@@ -241,7 +258,7 @@ export default function Page() {
           <nav className="border-l border-[rgba(0,0,0,0.1)] flex flex-col gap-2">
             <SidebarItem active={activeStep === 1} completed={!!agent} label="Register agent" />
             <SidebarItem active={activeStep === 2} completed={hasEnrolledCard} label="Link credit card" />
-            <SidebarItem active={activeStep === 3} completed={agentOrderIntents.length > 0} label="Create allowance" />
+            <SidebarItem active={activeStep === 3} completed={activeAgentOrderIntents.length > 0} label="Create allowance" />
             <SidebarItem active={activeStep === 4} completed={false} label="Reveal details" />
           </nav>
         </aside>
@@ -353,14 +370,14 @@ export default function Page() {
           </div>
 
           {/* Step 4 — Reveal card details */}
-          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${!agent || agentOrderIntents.length === 0 ? "opacity-50 pointer-events-none" : ""}`}>
+          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${!agent || activeAgentOrderIntents.length === 0 ? "opacity-50 pointer-events-none" : ""}`}>
             <StepHeader
               step="04"
               title="Reveal card details"
               subtitle="Retrieve merchant-scoped card details when your agent is ready to pay."
             />
             <RevealCardDetails
-              orderIntents={agentOrderIntents}
+              orderIntents={activeAgentOrderIntents}
               loading={loading}
               getJwt={getJwt}
             />

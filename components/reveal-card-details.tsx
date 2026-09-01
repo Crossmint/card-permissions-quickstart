@@ -38,8 +38,6 @@ export function RevealCardDetails({
   const [credentialsByOrderIntentId, setCredentialsByOrderIntentId] = useState<Record<string, CardCredentials>>({});
   const [error, setError] = useState("");
 
-  const activeOrderIntents = orderIntents.filter((orderIntent) => orderIntent.phase === "active");
-
   const hideDetails = (orderIntentId: string) => {
     setCredentialsByOrderIntentId((current) => {
       const next = { ...current };
@@ -95,7 +93,7 @@ export function RevealCardDetails({
     );
   }
 
-  if (activeOrderIntents.length === 0) {
+  if (orderIntents.length === 0) {
     return (
       <div className="rounded-lg bg-[#F6F6F6] px-4 py-3 text-sm text-[#00150d]/50">
         Create an active allowance in Step 3 before revealing card details.
@@ -105,7 +103,7 @@ export function RevealCardDetails({
 
   return (
     <div className="space-y-[14px]">
-      {activeOrderIntents.map((orderIntent) => {
+      {orderIntents.map((orderIntent) => {
         const credentials = credentialsByOrderIntentId[orderIntent.orderIntentId];
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
