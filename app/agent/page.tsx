@@ -77,7 +77,7 @@ function ActivityItem({
 
 export default function AgentDemoPage() {
   const stytch = useStytch();
-  const { user } = useStytchUser();
+  const { user, isInitialized } = useStytchUser();
   const router = useRouter();
   const [agent, setAgent] = useState<AgentResponse | null>(null);
   const [orderIntents, setOrderIntents] = useState<OrderIntentResponse[]>([]);
@@ -92,6 +92,9 @@ export default function AgentDemoPage() {
   const getJwt = useCallback(() => stytch.session.getTokens()?.session_jwt ?? "", [stytch]);
 
   useEffect(() => {
+    if (!isInitialized) {
+      return;
+    }
     if (!user) {
       router.replace("/login");
       return;
@@ -111,7 +114,7 @@ export default function AgentDemoPage() {
     };
 
     void load();
-  }, [getJwt, router, user]);
+  }, [getJwt, isInitialized, router, user]);
 
   useEffect(() => {
     if (!credentials) {
@@ -159,7 +162,7 @@ export default function AgentDemoPage() {
     }
   };
 
-  if (!user || loading) {
+  if (!isInitialized || !user || loading) {
     return (
       <main className="min-h-dvh bg-[#F7F5F4] flex items-center justify-center">
         <Loader2 className="size-5 animate-spin text-[#05B959]" />
