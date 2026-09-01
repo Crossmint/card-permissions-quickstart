@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ShieldCheck, CreditCard, ChevronsUpDown } from "lucide-react";
-import type { OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
+import type { CardCredentials, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { createNewOrderIntent, fetchCardCredentials } from "@/lib/crossmint-api";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
@@ -43,7 +43,7 @@ export function IssueCardPermission({
   paymentMethodId: string;
   cards: PaymentMethodResponse[];
   getJwt: () => string;
-  onCardIssued: () => void;
+  onCardIssued: (orderIntent: OrderIntentResponse, credentials: CardCredentials) => void;
   onCancel: () => void;
 }) {
   const [step, setStep] = useState<Step>("form");
@@ -92,7 +92,7 @@ export function IssueCardPermission({
       if (intent.phase === "requires-verification") {
         setStep("order-verification");
       } else {
-        await getCredentials(intent.orderIntentId);
+        await getCredentials(intent);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create card permission");
@@ -100,16 +100,16 @@ export function IssueCardPermission({
     }
   };
 
-  const getCredentials = async (orderIntentId: string) => {
+  const getCredentials = async (intent: OrderIntentResponse) => {
     setStep("fetching-credentials");
     try {
-      await fetchCardCredentials(getJwt(), orderIntentId, {
+      const credentials = await fetchCardCredentials(getJwt(), intent.orderIntentId, {
         name: merchantName,
         url: merchantUrl,
         countryCode: "US",
       });
-      onCardIssued();
       setStep("done");
+      onCardIssued(intent, credentials);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to get credentials");
       setStep("error");
@@ -290,8 +290,8 @@ export function IssueCardPermission({
           <OrderIntentVerification
             orderIntent={orderIntent}
             appearance={verificationAppearance}
-            onVerificationComplete={() => getCredentials(orderIntent.orderIntentId)}
-            onVerificationError={() => getCredentials(orderIntent.orderIntentId)}
+            onVerificationComplete={() => getCredentials(orderIntent)}
+            onVerificationError={() => getCredentials(orderIntent)}
           />
         </div>
       </div>

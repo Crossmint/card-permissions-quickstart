@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Loader2, Copy, Check, LayoutList, Code2, Circle } from "lucide-react";
+import { Loader2, Copy, Check, LayoutList, Code2, Circle } from "lucide-react";
 import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
-import type { PaymentMethodResponse, AgentResponse, OrderIntentResponse } from "@/lib/crossmint-types";
+import type { CardCredentials, PaymentMethodResponse, AgentResponse, OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchAllData, createNewAgent, deleteAgent, removePaymentMethod } from "@/lib/crossmint-api";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
@@ -119,6 +119,7 @@ export default function Page() {
   const [agent, setAgent] = useState<AgentResponse | null>(null);
   const [savedCards, setSavedCards] = useState<PaymentMethodResponse[]>([]);
   const [orderIntents, setOrderIntents] = useState<OrderIntentResponse[]>([]);
+  const [credentialsByOrderIntentId, setCredentialsByOrderIntentId] = useState<Record<string, CardCredentials>>({});
   const [enrollmentStatuses, setEnrollmentStatuses] = useState<Record<string, string>>({});
   const [showSaveCard, setShowSaveCard] = useState(false);
   const [cardViewMode, setCardViewMode] = useState<"ui" | "code">("ui");
@@ -132,9 +133,6 @@ export default function Page() {
     const jwt = stytch.session.getTokens()?.session_jwt ?? "";
     if (!jwt) return;
     try {
-      const jwt = getJwt();
-      if (!jwt) return;
-
       const { cards, agents, orderIntents, enrollmentStatuses } = await fetchAllData(jwt);
 
       setSavedCards(cards);
@@ -183,12 +181,24 @@ export default function Page() {
     fetchData();
   };
 
-  const handleCardIssued = () => {
+  const handleCardIssued = (orderIntent: OrderIntentResponse, credentials: CardCredentials) => {
+    setOrderIntents((current) => {
+      if (current.some((intent) => intent.orderIntentId === orderIntent.orderIntentId)) {
+        return current;
+      }
+      return [orderIntent, ...current];
+    });
+    setCredentialsByOrderIntentId((current) => ({
+      ...current,
+      [orderIntent.orderIntentId]: credentials,
+    }));
     setIssuingForCard(null);
-    fetchData();
   };
 
   const hasEnrolledCard = Object.values(enrollmentStatuses).some((s) => s === "active");
+  const agentOrderIntents = agent
+    ? orderIntents.filter((orderIntent) => orderIntent.agentId === agent.agentId)
+    : [];
 
   // Determine which step is currently active for sidebar highlight
   const activeStep = !agent ? 1 : savedCards.length === 0 || !hasEnrolledCard ? 2 : 3;
@@ -228,7 +238,7 @@ export default function Page() {
           <nav className="border-l border-[rgba(0,0,0,0.1)] flex flex-col gap-2">
             <SidebarItem active={activeStep === 1} completed={!!agent} label="Register agent" />
             <SidebarItem active={activeStep === 2} completed={hasEnrolledCard} label="Link credit card" />
-            <SidebarItem active={activeStep === 3} completed={orderIntents.length > 0} label="Allow payments" />
+            <SidebarItem active={activeStep === 3} completed={agentOrderIntents.length > 0} label="Allow payments" />
           </nav>
         </aside>
 
@@ -302,16 +312,16 @@ export default function Page() {
                 subtitle="Give an agent permission to pay with your card using spending rules."
               />
               <div className="shrink-0 mt-1">
-                {orderIntents.length > 0 && (
+                {agentOrderIntents.length > 0 && (
                   <ViewSwitch view={orderIntentViewMode} onChange={setOrderIntentViewMode} />
                 )}
               </div>
             </div>
 
             <OrderIntentsList
-              orderIntents={orderIntents}
+              orderIntents={agentOrderIntents}
               loading={loading}
-              getJwt={getJwt}
+              credentialsByOrderIntentId={credentialsByOrderIntentId}
               viewMode={orderIntentViewMode}
               onIssueCardPermission={
                 !issuingForCard
