@@ -121,7 +121,10 @@ export default function AgentDemoPage() {
     if (!Number.isFinite(expiresInMs)) {
       return;
     }
-    const timer = window.setTimeout(() => setCredentials(null), Math.max(0, expiresInMs));
+    const timer = window.setTimeout(() => {
+      setCredentials(null);
+      setStage("idle");
+    }, Math.max(0, expiresInMs));
     return () => window.clearTimeout(timer);
   }, [credentials]);
 
