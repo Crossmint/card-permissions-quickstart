@@ -1,19 +1,9 @@
 "use client";
 
 import { CreditCard, Plus } from "lucide-react";
-import type { CardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
+import type { OrderIntentResponse } from "@/lib/crossmint-types";
 
-function formatCardNumber(number: string) {
-  return number.replace(/\s/g, "").replace(/(.{4})/g, "$1 ").trim();
-}
-
-function OrderIntentItem({
-  oi,
-  credentials,
-}: {
-  oi: OrderIntentResponse;
-  credentials?: CardCredentials;
-}) {
+function OrderIntentItem({ oi }: { oi: OrderIntentResponse }) {
   const description = oi.mandates.find((m) => m.type === "description") as { value: string } | undefined;
   const maxAmount = oi.mandates.find((m) => m.type === "maxAmount") as { value: string; details: { currency: string } } | undefined;
   const limitLabel = maxAmount ? `${maxAmount.value} ${maxAmount.details.currency.toUpperCase()}` : null;
@@ -21,18 +11,10 @@ function OrderIntentItem({
   return (
     <div className="flex items-center gap-3 rounded-lg bg-[#F6F6F6] px-4 py-3">
       <CreditCard className="size-5 text-[#2377FF] shrink-0" />
-      <div className="min-w-0 flex-1">
+      <div>
         <div className="text-sm font-medium text-[#00150d]">
           {description?.value ?? "Card Permission"}
         </div>
-        {credentials && (
-          <div className="flex items-baseline gap-2 text-xs">
-            <span className="text-[#00150d]/50">Agent card</span>
-            <span className="font-mono text-[#00150d] tracking-wide">
-              {formatCardNumber(credentials.card.number)}
-            </span>
-          </div>
-        )}
         {limitLabel && (
           <div className="text-xs text-[#00150d]/50">{limitLabel}</div>
         )}
@@ -44,13 +26,11 @@ function OrderIntentItem({
 export function OrderIntentsList({
   orderIntents,
   loading,
-  credentialsByOrderIntentId = {},
   onIssueCardPermission,
   viewMode = "ui",
 }: {
   orderIntents: OrderIntentResponse[];
   loading: boolean;
-  credentialsByOrderIntentId?: Record<string, CardCredentials>;
   onIssueCardPermission?: () => void;
   viewMode?: "ui" | "code";
 }) {
@@ -74,7 +54,7 @@ export function OrderIntentsList({
           <Plus className="size-5 text-[#00150d] group-hover:text-[#05B959] transition-colors" />
         </div>
         <span className="font-medium text-base text-[#00150d] group-hover:text-[#05B959] transition-colors">
-          Allow payments
+          Create allowance
         </span>
       </button>
     );
@@ -92,18 +72,14 @@ export function OrderIntentsList({
     <div className="space-y-4">
       <div className="space-y-[14px]">
         {orderIntents.map((oi) => (
-          <OrderIntentItem
-            key={oi.orderIntentId}
-            oi={oi}
-            credentials={credentialsByOrderIntentId[oi.orderIntentId]}
-          />
+          <OrderIntentItem key={oi.orderIntentId} oi={oi} />
         ))}
       </div>
       {onIssueCardPermission && (
         <button onClick={onIssueCardPermission} className="flex items-center gap-3 pl-4 group">
           <Plus className="size-5 text-[#00150d] group-hover:text-[#05B959] transition-colors shrink-0" />
           <span className="text-sm font-medium text-[#00150d] group-hover:text-[#05B959] transition-colors">
-            Allow payments
+            Create allowance
           </span>
         </button>
       )}

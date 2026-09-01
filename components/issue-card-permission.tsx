@@ -2,18 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ShieldCheck, CreditCard, ChevronsUpDown } from "lucide-react";
-import type { CardCredentials, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
-import { createNewOrderIntent, fetchCardCredentials } from "@/lib/crossmint-api";
+import type { OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
+import { createNewOrderIntent } from "@/lib/crossmint-api";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 
-type Step =
-  | "form"
-  | "creating"
-  | "order-verification"
-  | "fetching-credentials"
-  | "done"
-  | "error";
+type Step = "form" | "creating" | "order-verification" | "done" | "error";
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -43,7 +37,7 @@ export function IssueCardPermission({
   paymentMethodId: string;
   cards: PaymentMethodResponse[];
   getJwt: () => string;
-  onCardIssued: (orderIntent: OrderIntentResponse, credentials: CardCredentials) => void;
+  onCardIssued: (orderIntent: OrderIntentResponse) => void;
   onCancel: () => void;
 }) {
   const [step, setStep] = useState<Step>("form");
@@ -54,8 +48,6 @@ export function IssueCardPermission({
   const [selectorOpen, setSelectorOpen] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
 
-  const [merchantName, setMerchantName] = useState("");
-  const [merchantUrl, setMerchantUrl] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
   const [period, setPeriod] = useState<"once" | "weekly" | "monthly" | "yearly">("once");
   const [description, setDescription] = useState("");
@@ -84,7 +76,7 @@ export function IssueCardPermission({
           value: maxAmount,
           details: period === "once" ? { currency: "usd" } : { currency: "usd", period },
         },
-        { type: "description", value: description || `Purchase from ${merchantName}` },
+        { type: "description", value: description || "Agent card allowance" },
       ]);
 
       setOrderIntent(intent);
@@ -92,28 +84,17 @@ export function IssueCardPermission({
       if (intent.phase === "requires-verification") {
         setStep("order-verification");
       } else {
-        await getCredentials(intent);
+        finishCreatingAllowance(intent);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create card permission");
+      setError(err instanceof Error ? err.message : "Failed to create allowance");
       setStep("error");
     }
   };
 
-  const getCredentials = async (intent: OrderIntentResponse) => {
-    setStep("fetching-credentials");
-    try {
-      const credentials = await fetchCardCredentials(getJwt(), intent.orderIntentId, {
-        name: merchantName,
-        url: merchantUrl,
-        countryCode: "US",
-      });
-      setStep("done");
-      onCardIssued(intent, credentials);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to get credentials");
-      setStep("error");
-    }
+  const finishCreatingAllowance = (intent: OrderIntentResponse) => {
+    setStep("done");
+    onCardIssued(intent);
   };
 
   if (step === "form") {
@@ -173,8 +154,6 @@ export function IssueCardPermission({
             <button
               type="button"
               onClick={() => {
-                setMerchantName("Whole Foods");
-                setMerchantUrl("https://www.wholefoodsmarket.com");
                 setMaxAmount("150.00");
                 setPeriod("once");
                 setDescription("Weekly groceries");
@@ -183,28 +162,6 @@ export function IssueCardPermission({
             >
               Fill example details
             </button>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant name</label>
-            <input
-              type="text"
-              value={merchantName}
-              onChange={(e) => setMerchantName(e.target.value)}
-              placeholder="e.g. Whole Foods"
-              required
-              className="w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant URL</label>
-            <input
-              type="url"
-              value={merchantUrl}
-              onChange={(e) => setMerchantUrl(e.target.value)}
-              placeholder="e.g. https://www.wholefoodsmarket.com"
-              required
-              className="w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20"
-            />
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
@@ -247,7 +204,7 @@ export function IssueCardPermission({
               type="submit"
               className="text-xs font-medium text-white bg-[#05B959] hover:bg-[#049d4c] px-4 py-2 rounded-md transition-colors"
             >
-              Allow payments
+              Create allowance
             </button>
             <button
               type="button"
@@ -262,15 +219,11 @@ export function IssueCardPermission({
     );
   }
 
-  if (step === "creating" || step === "fetching-credentials") {
-    const messages: Record<string, string> = {
-      creating: "Setting up card permission...",
-      "fetching-credentials": "Retrieving secure card number...",
-    };
+  if (step === "creating") {
     return (
       <div className="rounded-[10px] border border-[rgba(0,0,0,0.1)] bg-white p-6 flex items-center justify-center gap-2 text-sm text-[#00150d]/60">
         <Loader2 className="size-4 animate-spin text-[#05B959]" />
-        <span>{messages[step]}</span>
+        <span>Creating allowance...</span>
       </div>
     );
   }
@@ -290,8 +243,11 @@ export function IssueCardPermission({
           <OrderIntentVerification
             orderIntent={orderIntent}
             appearance={verificationAppearance}
-            onVerificationComplete={() => getCredentials(orderIntent)}
-            onVerificationError={() => getCredentials(orderIntent)}
+            onVerificationComplete={() => finishCreatingAllowance(orderIntent)}
+            onVerificationError={() => {
+              setError("Verification failed. Please try again.");
+              setStep("error");
+            }}
           />
         </div>
       </div>
@@ -301,7 +257,7 @@ export function IssueCardPermission({
   if (step === "error") {
     return (
       <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 space-y-2">
-        <p className="text-sm font-medium text-red-700">Failed to allow payments</p>
+        <p className="text-sm font-medium text-red-700">Failed to create allowance</p>
         <p className="text-xs text-red-600">{error}</p>
         <button
           onClick={() => { setStep("form"); setError(""); }}

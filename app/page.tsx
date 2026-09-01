@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 import { Loader2, Copy, Check, LayoutList, Code2, Circle } from "lucide-react";
 import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
-import type { CardCredentials, PaymentMethodResponse, AgentResponse, OrderIntentResponse } from "@/lib/crossmint-types";
+import type { PaymentMethodResponse, AgentResponse, OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchAllData, createNewAgent, deleteAgent, removePaymentMethod } from "@/lib/crossmint-api";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
 import { IssueCardPermission } from "@/components/issue-card-permission";
 import { OrderIntentsList } from "@/components/order-intents-list";
 import { AgentSection } from "@/components/agent-section";
+import { RevealCardDetails } from "@/components/reveal-card-details";
 
 const TEST_CARD = "4242 4242 4242 4242";
 
@@ -119,7 +120,6 @@ export default function Page() {
   const [agent, setAgent] = useState<AgentResponse | null>(null);
   const [savedCards, setSavedCards] = useState<PaymentMethodResponse[]>([]);
   const [orderIntents, setOrderIntents] = useState<OrderIntentResponse[]>([]);
-  const [credentialsByOrderIntentId, setCredentialsByOrderIntentId] = useState<Record<string, CardCredentials>>({});
   const [enrollmentStatuses, setEnrollmentStatuses] = useState<Record<string, string>>({});
   const [showSaveCard, setShowSaveCard] = useState(false);
   const [cardViewMode, setCardViewMode] = useState<"ui" | "code">("ui");
@@ -181,18 +181,15 @@ export default function Page() {
     fetchData();
   };
 
-  const handleCardIssued = (orderIntent: OrderIntentResponse, credentials: CardCredentials) => {
+  const handleCardIssued = (orderIntent: OrderIntentResponse) => {
     setOrderIntents((current) => {
       if (current.some((intent) => intent.orderIntentId === orderIntent.orderIntentId)) {
         return current;
       }
       return [orderIntent, ...current];
     });
-    setCredentialsByOrderIntentId((current) => ({
-      ...current,
-      [orderIntent.orderIntentId]: credentials,
-    }));
     setIssuingForCard(null);
+    void fetchData();
   };
 
   const hasEnrolledCard = Object.values(enrollmentStatuses).some((s) => s === "active");
@@ -201,7 +198,13 @@ export default function Page() {
     : [];
 
   // Determine which step is currently active for sidebar highlight
-  const activeStep = !agent ? 1 : savedCards.length === 0 || !hasEnrolledCard ? 2 : 3;
+  const activeStep = !agent
+    ? 1
+    : savedCards.length === 0 || !hasEnrolledCard
+      ? 2
+      : agentOrderIntents.length === 0
+        ? 3
+        : 4;
 
   if (!user) {
     return (
@@ -238,7 +241,8 @@ export default function Page() {
           <nav className="border-l border-[rgba(0,0,0,0.1)] flex flex-col gap-2">
             <SidebarItem active={activeStep === 1} completed={!!agent} label="Register agent" />
             <SidebarItem active={activeStep === 2} completed={hasEnrolledCard} label="Link credit card" />
-            <SidebarItem active={activeStep === 3} completed={agentOrderIntents.length > 0} label="Allow payments" />
+            <SidebarItem active={activeStep === 3} completed={agentOrderIntents.length > 0} label="Create allowance" />
+            <SidebarItem active={activeStep === 4} completed={false} label="Reveal details" />
           </nav>
         </aside>
 
@@ -308,7 +312,7 @@ export default function Page() {
             <div className="flex items-start justify-between">
               <StepHeader
                 step="03"
-                title="Allow payments"
+                title="Create allowance"
                 subtitle="Give an agent permission to pay with your card using spending rules."
               />
               <div className="shrink-0 mt-1">
@@ -321,7 +325,6 @@ export default function Page() {
             <OrderIntentsList
               orderIntents={agentOrderIntents}
               loading={loading}
-              credentialsByOrderIntentId={credentialsByOrderIntentId}
               viewMode={orderIntentViewMode}
               onIssueCardPermission={
                 !issuingForCard
@@ -347,6 +350,20 @@ export default function Page() {
                 />
               </div>
             )}
+          </div>
+
+          {/* Step 4 — Reveal card details */}
+          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${!agent || agentOrderIntents.length === 0 ? "opacity-50 pointer-events-none" : ""}`}>
+            <StepHeader
+              step="04"
+              title="Reveal card details"
+              subtitle="Retrieve merchant-scoped card details when your agent is ready to pay."
+            />
+            <RevealCardDetails
+              orderIntents={agentOrderIntents}
+              loading={loading}
+              getJwt={getJwt}
+            />
           </div>
 
         </div>
