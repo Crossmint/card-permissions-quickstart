@@ -50,6 +50,7 @@ export type Mandate =
 export type OrderIntentResponse =
   | {
       orderIntentId: string;
+      agentId: string;
       phase: "requires-verification";
       payment: { paymentMethodId: string };
       mandates: Mandate[];
@@ -57,6 +58,7 @@ export type OrderIntentResponse =
     }
   | {
       orderIntentId: string;
+      agentId: string;
       phase: "active" | "expired";
       payment: { paymentMethodId: string };
       mandates: Mandate[];

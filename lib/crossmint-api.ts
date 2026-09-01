@@ -111,6 +111,17 @@ export async function fetchOrderIntents(jwt: string): Promise<OrderIntentRespons
   return data;
 }
 
+/** Fetch a single order intent, synchronizing its latest phase. */
+export async function fetchOrderIntent(jwt: string, orderIntentId: string): Promise<OrderIntentResponse> {
+  const res = await fetch(`${BASE_URL}/order-intents/${orderIntentId}`, { headers: authHeaders(jwt) });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch order intent (${res.status})`);
+  }
+  const data = await res.json();
+  log("GET /order-intents/:id → response", data);
+  return data;
+}
+
 // ─── Batch fetch ────────────────────────────────────────────────────────────
 // Next.js serializes concurrent server action calls from the client, so
 // fetching cards, agents, and intents as separate calls runs sequentially.
@@ -252,6 +263,6 @@ export async function fetchCardCredentials(
   });
   if (!res.ok) throw new Error(`Failed to fetch card credentials (${res.status})`);
   const data = await res.json();
-  log(`POST /order-intents/${orderIntentId}/credentials → response`, data);
+  log("POST /order-intents/:id/credentials → success", { orderIntentId, status: res.status });
   return data;
 }

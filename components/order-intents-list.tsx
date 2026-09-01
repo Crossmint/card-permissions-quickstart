@@ -1,7 +1,8 @@
 "use client";
 
-import { Loader2, CreditCard, Plus } from "lucide-react";
+import { CreditCard, Plus } from "lucide-react";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
+
 function OrderIntentItem({ oi }: { oi: OrderIntentResponse }) {
   const description = oi.mandates.find((m) => m.type === "description") as { value: string } | undefined;
   const maxAmount = oi.mandates.find((m) => m.type === "maxAmount") as { value: string; details: { currency: string } } | undefined;
@@ -25,13 +26,11 @@ function OrderIntentItem({ oi }: { oi: OrderIntentResponse }) {
 export function OrderIntentsList({
   orderIntents,
   loading,
-  getJwt,
   onIssueCardPermission,
   viewMode = "ui",
 }: {
   orderIntents: OrderIntentResponse[];
   loading: boolean;
-  getJwt: () => string;
   onIssueCardPermission?: () => void;
   viewMode?: "ui" | "code";
 }) {
@@ -55,7 +54,7 @@ export function OrderIntentsList({
           <Plus className="size-5 text-[#00150d] group-hover:text-[#05B959] transition-colors" />
         </div>
         <span className="font-medium text-base text-[#00150d] group-hover:text-[#05B959] transition-colors">
-          Allow payments
+          Create allowance
         </span>
       </button>
     );
@@ -80,7 +79,7 @@ export function OrderIntentsList({
         <button onClick={onIssueCardPermission} className="flex items-center gap-3 pl-4 group">
           <Plus className="size-5 text-[#00150d] group-hover:text-[#05B959] transition-colors shrink-0" />
           <span className="text-sm font-medium text-[#00150d] group-hover:text-[#05B959] transition-colors">
-            Allow payments
+            Create allowance
           </span>
         </button>
       )}
