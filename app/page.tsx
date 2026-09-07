@@ -5,19 +5,13 @@ import { useRouter } from "next/navigation";
 import { Loader2, Copy, Check, LayoutList, Code2, Circle } from "lucide-react";
 import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
-import type { PaymentMethodResponse, AgentResponse, OrderIntentResponse } from "@/lib/crossmint-types";
-import {
-  fetchAllData,
-  fetchOrderIntent,
-  createNewAgent,
-  deleteAgent,
-  removePaymentMethod,
-} from "@/lib/crossmint-api";
+import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
+import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
+import { isUsable } from "@/lib/rails";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
 import { IssueCardPermission } from "@/components/issue-card-permission";
 import { OrderIntentsList } from "@/components/order-intents-list";
-import { AgentSection } from "@/components/agent-section";
 import { RevealCardDetails } from "@/components/reveal-card-details";
 
 const TEST_CARD = "4242 4242 4242 4242";
@@ -125,28 +119,23 @@ export default function Page() {
     if (tokens?.session_jwt) setJwt(tokens.session_jwt);
   }, [stytch, user, setJwt]);
 
-  const [agent, setAgent] = useState<AgentResponse | null>(null);
   const [savedCards, setSavedCards] = useState<PaymentMethodResponse[]>([]);
   const [orderIntents, setOrderIntents] = useState<OrderIntentResponse[]>([]);
-  const [enrollmentStatuses, setEnrollmentStatuses] = useState<Record<string, string>>({});
+  const [registrations, setRegistrations] = useState<Record<string, OrderIntentRegistration | null>>({});
   const [showSaveCard, setShowSaveCard] = useState(false);
   const [cardViewMode, setCardViewMode] = useState<"ui" | "code">("ui");
   const [orderIntentViewMode, setOrderIntentViewMode] = useState<"ui" | "code">("ui");
   const [issuingForCard, setIssuingForCard] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [creatingAgent, setCreatingAgent] = useState(false);
-  const [deletingAgent, setDeletingAgent] = useState(false);
 
   const fetchData = useCallback(async () => {
     const jwt = stytch.session.getTokens()?.session_jwt ?? "";
     if (!jwt) return;
     try {
-      const { cards, agents, orderIntents, enrollmentStatuses } = await fetchAllData(jwt);
-
-      setSavedCards(cards);
-      setOrderIntents(orderIntents);
-      setEnrollmentStatuses(enrollmentStatuses);
-      if (agents.length > 0) setAgent(agents[0]);
+      const data = await fetchAllData(jwt);
+      setSavedCards(data.cards);
+      setOrderIntents(data.orderIntents);
+      setRegistrations(data.registrations);
     } catch (err) {
       console.error("Failed to fetch profile data:", err);
     } finally {
@@ -160,27 +149,6 @@ export default function Page() {
     }
   }, [isInitialized, user, fetchData]);
 
-  const handleCreateAgent = async () => {
-    setCreatingAgent(true);
-    try {
-      const result = await createNewAgent(getJwt(), "Card Payment Agent", "Default agent for card payments");
-      setAgent(result);
-    } finally {
-      setCreatingAgent(false);
-    }
-  };
-
-  const handleDeleteAgent = async () => {
-    if (!agent) return;
-    setDeletingAgent(true);
-    try {
-      await deleteAgent(getJwt(), agent.agentId);
-      setAgent(null);
-    } finally {
-      setDeletingAgent(false);
-    }
-  };
-
   const handleCardSaved = () => {
     setShowSaveCard(false);
     fetchData();
@@ -191,41 +159,42 @@ export default function Page() {
     fetchData();
   };
 
-  const handleCardIssued = (orderIntent: OrderIntentResponse) => {
+  const upsertOrderIntent = (orderIntent: OrderIntentResponse) => {
     setOrderIntents((current) => {
-      if (current.some((intent) => intent.orderIntentId === orderIntent.orderIntentId)) {
-        return current;
-      }
-      return [orderIntent, ...current];
+      const exists = current.some((intent) => intent.orderIntentId === orderIntent.orderIntentId);
+      return exists
+        ? current.map((intent) => (intent.orderIntentId === orderIntent.orderIntentId ? orderIntent : intent))
+        : [orderIntent, ...current];
     });
+  };
+
+  const handleCardIssued = (orderIntent: OrderIntentResponse) => {
+    upsertOrderIntent(orderIntent);
     setIssuingForCard(null);
+    // Re-read once: rail statuses are read live from the provider.
     void fetchOrderIntent(getJwt(), orderIntent.orderIntentId)
-      .then((refreshedOrderIntent) => {
-        setOrderIntents((current) =>
-          current.map((intent) =>
-            intent.orderIntentId === refreshedOrderIntent.orderIntentId ? refreshedOrderIntent : intent,
-          ),
-        );
-      })
+      .then(upsertOrderIntent)
       .catch((error) => {
         console.error("Failed to refresh the new allowance:", error);
       });
   };
 
-  const hasEnrolledCard = Object.values(enrollmentStatuses).some((s) => s === "active");
-  const agentOrderIntents = agent
-    ? orderIntents.filter((orderIntent) => orderIntent.agentId === agent.agentId)
-    : [];
-  const activeAgentOrderIntents = agentOrderIntents.filter((orderIntent) => orderIntent.phase === "active");
+  const handleCancelOrderIntent = async (orderIntent: OrderIntentResponse) => {
+    await deleteOrderIntent(getJwt(), orderIntent.orderIntentId);
+    setOrderIntents((current) => current.filter((intent) => intent.orderIntentId !== orderIntent.orderIntentId));
+  };
+
+  const registeredCards = savedCards.filter((card) => registrations[card.paymentMethodId]);
+  const hasRegisteredCard = registeredCards.length > 0;
+  const visibleOrderIntents = orderIntents.filter((orderIntent) => orderIntent.status !== "cancelled");
+  const usableOrderIntents = visibleOrderIntents.filter(isUsable);
 
   // Determine which step is currently active for sidebar highlight
-  const activeStep = !agent
+  const activeStep = savedCards.length === 0 || !hasRegisteredCard
     ? 1
-    : savedCards.length === 0 || !hasEnrolledCard
+    : usableOrderIntents.length === 0
       ? 2
-      : activeAgentOrderIntents.length === 0
-        ? 3
-        : 4;
+      : 3;
 
   if (!isInitialized || !user) {
     return (
@@ -260,40 +229,22 @@ export default function Page() {
             Card Permissions
           </h1>
           <nav className="border-l border-[rgba(0,0,0,0.1)] flex flex-col gap-2">
-            <SidebarItem active={activeStep === 1} completed={!!agent} label="Register agent" />
-            <SidebarItem active={activeStep === 2} completed={hasEnrolledCard} label="Link credit card" />
-            <SidebarItem active={activeStep === 3} completed={activeAgentOrderIntents.length > 0} label="Create allowance" />
-            <SidebarItem active={activeStep === 4} completed={false} label="Reveal details" />
+            <SidebarItem active={activeStep === 1} completed={hasRegisteredCard} label="Link credit card" />
+            <SidebarItem active={activeStep === 2} completed={usableOrderIntents.length > 0} label="Create allowance" />
+            <SidebarItem active={activeStep === 3} completed={false} label="Reveal details" />
           </nav>
         </aside>
 
         {/* Content */}
         <div className="space-y-7">
 
-          {/* Step 1 — Register agent */}
+          {/* Step 1 — Save and register a credit card */}
           <div className="bg-white rounded-[10px] p-5">
-            <StepHeader
-              step="01"
-              title="Register agent"
-              subtitle="Link your agent to start allowing card payments."
-            />
-            <AgentSection
-              agent={agent}
-              loading={loading}
-              creating={creatingAgent}
-              deleting={deletingAgent}
-              onCreate={handleCreateAgent}
-              onDelete={handleDeleteAgent}
-            />
-          </div>
-
-          {/* Step 2 — Save credit card */}
-          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${!agent ? "opacity-50 pointer-events-none" : ""}`}>
             <div className="flex items-start justify-between">
               <StepHeader
-                step="02"
+                step="01"
                 title="Save credit card"
-                subtitle="Your cards are encrypted and stored securely."
+                subtitle="Your cards are encrypted and stored securely. Register each card once so agents can pay with it."
               />
               <div className="shrink-0 mt-1">
                 {showSaveCard
@@ -306,14 +257,12 @@ export default function Page() {
             <SavedCardsList
               cards={savedCards}
               loading={loading}
-              canIssue={!!agent}
               getJwt={getJwt}
               email={userEmail}
-              enrollmentStatuses={enrollmentStatuses}
-              onIssueCardPermission={(paymentMethodId) => setIssuingForCard(paymentMethodId)}
+              registrations={registrations}
               onDeleteCard={handleDeleteCard}
               onAddCard={showSaveCard || (savedCards.length > 0 && orderIntents.length === 0) ? undefined : () => setShowSaveCard(true)}
-              onEnrollmentComplete={fetchData}
+              onRegistrationComplete={fetchData}
               viewMode={cardViewMode}
             />
 
@@ -328,43 +277,40 @@ export default function Page() {
             )}
           </div>
 
-          {/* Step 3 — Allow payments */}
-          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${!agent || !hasEnrolledCard ? "opacity-50 pointer-events-none" : ""}`}>
+          {/* Step 2 — Create allowance */}
+          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${!hasRegisteredCard ? "opacity-50 pointer-events-none" : ""}`}>
             <div className="flex items-start justify-between">
               <StepHeader
-                step="03"
+                step="02"
                 title="Create allowance"
-                subtitle="Give an agent permission to pay with your card using spending rules."
+                subtitle="Give an agent permission to pay with your card, up to an amount and until an expiry."
               />
               <div className="shrink-0 mt-1">
-                {agentOrderIntents.length > 0 && (
+                {visibleOrderIntents.length > 0 && (
                   <ViewSwitch view={orderIntentViewMode} onChange={setOrderIntentViewMode} />
                 )}
               </div>
             </div>
 
             <OrderIntentsList
-              orderIntents={agentOrderIntents}
+              orderIntents={visibleOrderIntents}
               loading={loading}
+              getJwt={getJwt}
               viewMode={orderIntentViewMode}
+              onUpdated={upsertOrderIntent}
+              onCancel={handleCancelOrderIntent}
               onIssueCardPermission={
-                !issuingForCard
-                  ? () => {
-                      const firstEnrolled = savedCards.find(
-                        (c) => enrollmentStatuses[c.paymentMethodId] === "active"
-                      );
-                      if (firstEnrolled) setIssuingForCard(firstEnrolled.paymentMethodId);
-                    }
+                !issuingForCard && registeredCards[0]
+                  ? () => setIssuingForCard(registeredCards[0].paymentMethodId)
                   : undefined
               }
             />
 
-            {issuingForCard && agent && (
+            {issuingForCard && (
               <div className="mt-4">
                 <IssueCardPermission
-                  agentId={agent.agentId}
                   paymentMethodId={issuingForCard}
-                  cards={savedCards.filter((c) => enrollmentStatuses[c.paymentMethodId] === "active")}
+                  cards={registeredCards}
                   getJwt={getJwt}
                   onCardIssued={handleCardIssued}
                   onCancel={() => setIssuingForCard(null)}
@@ -373,15 +319,15 @@ export default function Page() {
             )}
           </div>
 
-          {/* Step 4 — Reveal card details */}
-          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${!agent || activeAgentOrderIntents.length === 0 ? "opacity-50 pointer-events-none" : ""}`}>
+          {/* Step 3 — Reveal card details */}
+          <div className={`bg-white rounded-[10px] p-5 transition-opacity ${usableOrderIntents.length === 0 ? "opacity-50 pointer-events-none" : ""}`}>
             <StepHeader
-              step="04"
+              step="03"
               title="Reveal card details"
-              subtitle="Retrieve merchant-scoped card details when your agent is ready to pay."
+              subtitle="Retrieve card details when your agent is ready to pay. Uses the network rail, or the encrypted-card fallback."
             />
             <RevealCardDetails
-              orderIntents={activeAgentOrderIntents}
+              orderIntents={usableOrderIntents}
               loading={loading}
               getJwt={getJwt}
             />

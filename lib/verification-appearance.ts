@@ -1,11 +1,6 @@
-import type { ComponentProps } from "react";
-import { PaymentMethodAgenticEnrollmentVerification } from "@crossmint/client-sdk-react-ui";
+import type { OrderIntentVerificationProps } from "@crossmint/client-sdk-react-ui";
 
-type VerificationAppearance = NonNullable<
-  ComponentProps<
-    typeof PaymentMethodAgenticEnrollmentVerification
-  >["appearance"]
->;
+export type VerificationAppearance = NonNullable<OrderIntentVerificationProps["appearance"]>;
 
 export const verificationAppearance: VerificationAppearance = {
   variables: {

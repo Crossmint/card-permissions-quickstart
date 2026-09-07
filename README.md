@@ -19,11 +19,23 @@ Give agents permission to pay with a user's card through Crossmint's Agentic Pay
 
 **Learn how to:**
 - Authenticate a user via Stytch (Google OAuth)
-- Create an agent to manage card payments
 - Save a payment method via Crossmint's embedded UI
-- Verify a card for agent-initiated payments with passkey verification
-- Give card permissions with per-transaction, daily, and monthly spending rules
-- Retrieve secure card numbers (card number, expiration, CVC)
+- Register a card for agent payments and read which rails it supports
+- Create an allowance (order intent) with an amount, an expiry, and an optional merchant
+- Verify an allowance with the user's bank when the network rail asks for it
+- Retrieve card details through the Visa/Mastercard rail, or through the encrypted-card fallback for cards the networks do not support
+
+## How the fallback works
+An order intent exposes one or more **rails**. Each rail is an independent way to spend the same allowance:
+
+| Rail | Cards | Verification | Credential |
+|------|-------|--------------|------------|
+| `agentic-token` | Visa (`vic`) and Mastercard (`agentpay`) | Bank verification on the first allowance | One-time card number, expires with `expiresAt` |
+| `encrypted-card` | Any eligible saved card | None | The saved card as a JWE, decrypted in the browser |
+
+The app picks the first active rail that can mint a `card` credential. It prefers `agentic-token` and falls back to `encrypted-card`. See `lib/rails.ts` and `lib/card-credentials.ts`.
+
+For the encrypted-card rail the browser generates a one-time RSA-OAEP-256 keypair with WebCrypto, sends only the public JWK, and decrypts the returned JWE with `jose`. The private key and the card number never reach this app's server. See `lib/encrypted-card.ts`.
 
 ## Deploy
 Easily deploy the template to Vercel with the button below. You will need to set the required environment variables in the Vercel dashboard.

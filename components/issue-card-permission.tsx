@@ -1,13 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, ShieldCheck, CreditCard, ChevronsUpDown } from "lucide-react";
+import { Loader2, CreditCard, ChevronsUpDown, Store } from "lucide-react";
 import type { OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { createNewOrderIntent } from "@/lib/crossmint-api";
-import { verificationAppearance } from "@/lib/verification-appearance";
-import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 
-type Step = "form" | "creating" | "order-verification" | "done" | "error";
+type Step = "form" | "creating" | "error";
+
+const EXPIRY_OPTIONS = [
+  { value: "1h", label: "1 hour", ms: 60 * 60 * 1000 },
+  { value: "1d", label: "1 day", ms: 24 * 60 * 60 * 1000 },
+  { value: "7d", label: "7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  { value: "30d", label: "30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+] as const;
+type ExpiryValue = (typeof EXPIRY_OPTIONS)[number]["value"];
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -25,15 +31,16 @@ function cardExpDisplay(card: PaymentMethodResponse) {
   return m && y ? `Exp. date ${m}/${y.slice(-2)}` : null;
 }
 
+const inputClass =
+  "w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20";
+
 export function IssueCardPermission({
-  agentId,
   paymentMethodId,
   cards,
   getJwt,
   onCardIssued,
   onCancel,
 }: {
-  agentId: string;
   paymentMethodId: string;
   cards: PaymentMethodResponse[];
   getJwt: () => string;
@@ -42,15 +49,17 @@ export function IssueCardPermission({
 }) {
   const [step, setStep] = useState<Step>("form");
   const [error, setError] = useState("");
-  const [orderIntent, setOrderIntent] = useState<OrderIntentResponse | null>(null);
 
   const [selectedCardId, setSelectedCardId] = useState(paymentMethodId);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
 
   const [maxAmount, setMaxAmount] = useState("");
-  const [period, setPeriod] = useState<"once" | "weekly" | "monthly" | "yearly">("once");
+  const [expiry, setExpiry] = useState<ExpiryValue>("7d");
   const [description, setDescription] = useState("");
+  const [scopeToMerchant, setScopeToMerchant] = useState(false);
+  const [merchantName, setMerchantName] = useState("");
+  const [merchantUrl, setMerchantUrl] = useState("");
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -70,31 +79,24 @@ export function IssueCardPermission({
     setStep("creating");
 
     try {
-      const intent = await createNewOrderIntent(getJwt(), agentId, selectedCardId, [
-        {
-          type: "maxAmount",
-          value: maxAmount,
-          details: period === "once" ? { currency: "usd" } : { currency: "usd", period },
-        },
-        { type: "description", value: description || "Agent card allowance" },
-      ]);
-
-      setOrderIntent(intent);
-
-      if (intent.phase === "requires-verification") {
-        setStep("order-verification");
-      } else {
-        finishCreatingAllowance(intent);
-      }
+      const expiresInMs = EXPIRY_OPTIONS.find((option) => option.value === expiry)?.ms ?? EXPIRY_OPTIONS[2].ms;
+      const intent = await createNewOrderIntent(getJwt(), {
+        paymentMethodId: selectedCardId,
+        amount: { value: maxAmount, currency: "USD" },
+        description: description || "Agent card allowance",
+        expiresAt: new Date(Date.now() + expiresInMs).toISOString(),
+        // Optional. A merchant fixed here is not repeated on credential requests.
+        ...(scopeToMerchant && merchantName && merchantUrl
+          ? { merchant: { name: merchantName, url: merchantUrl, countryCode: "US" } }
+          : {}),
+      });
+      // The intent may still need bank verification on its network rail.
+      // The allowance list shows a "Verify" action for it.
+      onCardIssued(intent);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create allowance");
       setStep("error");
     }
-  };
-
-  const finishCreatingAllowance = (intent: OrderIntentResponse) => {
-    setStep("done");
-    onCardIssued(intent);
   };
 
   if (step === "form") {
@@ -155,8 +157,11 @@ export function IssueCardPermission({
               type="button"
               onClick={() => {
                 setMaxAmount("150.00");
-                setPeriod("once");
+                setExpiry("7d");
                 setDescription("Weekly groceries");
+                setScopeToMerchant(true);
+                setMerchantName("Whole Foods");
+                setMerchantUrl("https://www.wholefoodsmarket.com");
               }}
               className="text-xs text-[#05B959] hover:text-[#049d4c] underline underline-offset-2"
             >
@@ -168,37 +173,76 @@ export function IssueCardPermission({
               <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Max amount (USD)</label>
               <input
                 type="text"
+                inputMode="decimal"
+                pattern="^\d+(\.\d{1,2})?$"
                 value={maxAmount}
                 onChange={(e) => setMaxAmount(e.target.value)}
                 placeholder="e.g. 150.00"
                 required
-                className="w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20"
+                className={inputClass}
               />
             </div>
             <div className="w-32">
-              <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Period</label>
+              <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Expires in</label>
               <select
-                value={period}
-                onChange={(e) => setPeriod(e.target.value as "once" | "weekly" | "monthly" | "yearly")}
-                className="w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20 bg-white h-[38px]"
+                value={expiry}
+                onChange={(e) => setExpiry(e.target.value as ExpiryValue)}
+                className={`${inputClass} bg-white h-[38px]`}
               >
-                <option value="once">1 time</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
+                {EXPIRY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Description (optional)</label>
+            <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Description</label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g. Weekly groceries"
-              className="w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20"
+              className={inputClass}
             />
           </div>
+
+          <label className="flex items-center gap-2 text-xs text-[#00150d]/70 cursor-pointer select-none pt-1">
+            <input
+              type="checkbox"
+              checked={scopeToMerchant}
+              onChange={(e) => setScopeToMerchant(e.target.checked)}
+              className="accent-[#05B959]"
+            />
+            <Store className="size-3.5 text-[#00150d]/50" />
+            Scope to one merchant (optional)
+          </label>
+          {scopeToMerchant && (
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant name</label>
+                <input
+                  type="text"
+                  value={merchantName}
+                  onChange={(e) => setMerchantName(e.target.value)}
+                  placeholder="e.g. Whole Foods"
+                  required
+                  className={inputClass}
+                />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant URL</label>
+                <input
+                  type="url"
+                  value={merchantUrl}
+                  onChange={(e) => setMerchantUrl(e.target.value)}
+                  placeholder="https://www.wholefoodsmarket.com"
+                  required
+                  className={inputClass}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
@@ -228,46 +272,16 @@ export function IssueCardPermission({
     );
   }
 
-  if (step === "order-verification" && orderIntent?.phase === "requires-verification") {
-    return (
-      <div className="rounded-[10px] border border-[rgba(0,0,0,0.1)] overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-[rgba(0,0,0,0.06)] bg-black/[0.02]">
-          <ShieldCheck className="size-3.5 text-[#05B959]" />
-          <span className="text-xs font-medium text-[#00150d]">Authorize spending</span>
-        </div>
-        <div className="p-4">
-          <div className="flex items-center gap-2 text-sm text-[#00150d]/60 mb-3">
-            <Loader2 className="size-4 animate-spin text-[#05B959]" />
-            <span>Waiting for passkey authorization...</span>
-          </div>
-          <OrderIntentVerification
-            orderIntent={orderIntent}
-            appearance={verificationAppearance}
-            onVerificationComplete={() => finishCreatingAllowance(orderIntent)}
-            onVerificationError={() => {
-              setError("Verification failed. Please try again.");
-              setStep("error");
-            }}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  if (step === "error") {
-    return (
-      <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 space-y-2">
-        <p className="text-sm font-medium text-red-700">Failed to create allowance</p>
-        <p className="text-xs text-red-600">{error}</p>
-        <button
-          onClick={() => { setStep("form"); setError(""); }}
-          className="text-xs text-red-600 hover:text-red-800 underline underline-offset-2"
-        >
-          Try again
-        </button>
-      </div>
-    );
-  }
-
-  return null;
+  return (
+    <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 space-y-2">
+      <p className="text-sm font-medium text-red-700">Failed to create allowance</p>
+      <p className="text-xs text-red-600 break-words">{error}</p>
+      <button
+        onClick={() => { setStep("form"); setError(""); }}
+        className="text-xs text-red-600 hover:text-red-800 underline underline-offset-2"
+      >
+        Try again
+      </button>
+    </div>
+  );
 }

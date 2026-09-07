@@ -1,14 +1,5 @@
 // ─── Crossmint API types ────────────────────────────────────────────────────
-
-export type AgenticEnrollmentVerificationConfig = {
-  environment: "production" | "test";
-  publicApiKey: string;
-};
-
-export type OrderIntentVerificationConfig = AgenticEnrollmentVerificationConfig & {
-  agentId: string;
-  instructionId: string;
-};
+// Mirrors https://docs.crossmint.com/api-reference/agentic-commerce (unstable).
 
 export type PaymentMethodResponse = {
   paymentMethodId: string;
@@ -20,56 +11,143 @@ export type PaymentMethodResponse = {
   };
 };
 
-// Agentic enrollment status:
-//   - "not_started": card has never been enrolled
-//   - "pending": enrollment initiated, waiting for passkey verification
-//   - "active": enrollment complete, agent can use this card
-export type AgenticEnrollmentResponse =
-  | { status: "not_started" }
-  | { enrollmentId: string; status: "active" }
-  | { enrollmentId: string; status: "pending"; verificationConfig: AgenticEnrollmentVerificationConfig };
-
-export type AgentResponse = {
-  agentId: string;
-  metadata: { name: string; description?: string };
+export type Merchant = {
+  name: string;
+  url: string;
+  countryCode: string;
 };
 
-// Mandates define the rules/constraints for an order intent (card permission):
-//   - maxAmount: spending limit per transaction/day/month/year
-//   - description: free-text description of intended use
-//   - prompt: instructions for the agent
-export type Mandate =
-  | { type: "maxAmount"; value: string; details: { currency: string; period?: "weekly" | "monthly" | "yearly" } }
-  | { type: "description"; value: string }
-  | { type: "prompt"; value: string };
+// The card networks that back the agentic-token rail:
+//   - "vic": Visa Intelligent Commerce
+//   - "agentpay": Mastercard Agent Pay
+export type RailProvider = "vic" | "agentpay";
+export type CredentialFormat = "card" | "network-token";
 
-// Order intent phases:
-//   - "requires-verification": passkey authorization needed before the card is active
-//   - "active": card permission is ready, credentials can be fetched
-//   - "expired": card permission has expired and can no longer be used
-export type OrderIntentResponse =
-  | {
-      orderIntentId: string;
-      agentId: string;
-      phase: "requires-verification";
-      payment: { paymentMethodId: string };
-      mandates: Mandate[];
-      verificationConfig: OrderIntentVerificationConfig;
-    }
-  | {
-      orderIntentId: string;
-      agentId: string;
-      phase: "active" | "expired";
-      payment: { paymentMethodId: string };
-      mandates: Mandate[];
-    };
+// ─── Card registration ──────────────────────────────────────────────────────
+// One-time step per saved card. It provisions the agentic rails the card
+// supports. A card with only errored rails still works through the
+// encrypted-card fallback when an allowance is created.
+//   - "enabled": the rail can back a new order intent
+//   - "pending": provisioning has not finished, poll again
+//   - "error": provisioning failed, read error.code
 
-export type CardCredentials = {
-  card: {
-    number: string;
-    expirationMonth: string | number;
-    expirationYear: string | number;
-    cvc: string;
-  };
+export type RegistrationRailStatus = "enabled" | "pending" | "error";
+
+export type RegistrationRail = {
+  rail: "agentic-token";
+  provider: RailProvider;
+  status: RegistrationRailStatus;
+  error?: { code: string } | null;
+};
+
+export type OrderIntentRegistration = {
+  paymentMethodId: string;
+  rails: RegistrationRail[];
+};
+
+// ─── Order intents (allowances) ─────────────────────────────────────────────
+// An order intent is a spending allowance on a saved card. It exposes one or
+// more rails, each an independent way to pay from the same allowance:
+//   - "agentic-token": Visa/Mastercard network rail, mints a one-time card number
+//   - "encrypted-card": universal fallback, returns the card as a JWE you decrypt
+// Per-rail status:
+//   - "active": ready to mint credentials
+//   - "pending_verification": the user must verify with their bank (agentic-token only)
+//   - "error": this rail cannot be used, read error.code
+
+export type OrderIntentStatus = "active" | "cancelled" | "expired";
+export type OrderIntentRailStatus = "active" | "pending_verification" | "error";
+
+// Same discriminated shape as the SDK's OrderIntentRail: `error` exists only on errored rails.
+type OrderIntentRailState =
+  | { status: "active" | "pending_verification"; error?: never }
+  | { status: "error"; error: { code: string } };
+
+type OrderIntentRailBase = OrderIntentRailState & {
+  credentialFormats: CredentialFormat[];
+};
+
+export type AgenticTokenRail = OrderIntentRailBase & {
+  rail: "agentic-token";
+  provider: RailProvider;
+};
+
+export type EncryptedCardRail = OrderIntentRailBase & {
+  rail: "encrypted-card";
+  provider?: undefined;
+};
+
+export type OrderIntentRail = AgenticTokenRail | EncryptedCardRail;
+
+export type OrderIntentVerificationConfig = {
+  environment: "production" | "test";
+  publicApiKey: string;
+  allowanceId: string;
+};
+
+export type OrderIntentAmount = {
+  total: string;
+  spent: string;
+  reserved: string;
+  available: string;
+  currency: string;
+};
+
+export type OrderIntentResponse = {
+  orderIntentId: string;
+  paymentMethodId: string;
+  status: OrderIntentStatus;
+  amount: OrderIntentAmount;
+  merchant?: Merchant;
+  description: string;
+  rails: OrderIntentRail[];
+  // Present only while at least one rail is pending_verification.
+  verificationConfig?: OrderIntentVerificationConfig;
   expiresAt: string;
+};
+
+export type CreateOrderIntentInput = {
+  paymentMethodId: string;
+  amount: { value: string; currency: string };
+  description: string;
+  expiresAt: string;
+  // Optional. When set here, credential requests do not repeat it.
+  merchant?: Merchant;
+};
+
+// ─── Credentials ────────────────────────────────────────────────────────────
+
+export type RsaPublicJwk = { kty: "RSA"; n: string; e: string };
+
+export type CardCredentialValue = {
+  number: string;
+  expirationMonth: string | number;
+  expirationYear: string | number;
+  cvc: string;
+};
+
+export type AgenticTokenCredentialResponse = {
+  id: string;
+  rail: "agentic-token";
+  provider: RailProvider;
+  amount: { value: string; currency: string };
+  credential: { format: "card"; value: CardCredentialValue };
+  expiresAt: string;
+};
+
+export type EncryptedCardCredentialResponse = {
+  rail: "encrypted-card";
+  // Compact JWE (RSA-OAEP-256 + A256GCM). Decrypt with the matching private key.
+  credential: { format: "card"; value: string };
+};
+
+// Normalized card details, whatever rail produced them. Never persist these.
+export type AgentCardCredentials = {
+  rail: "agentic-token" | "encrypted-card";
+  number: string;
+  expirationMonth: string;
+  expirationYear: string;
+  cvc: string;
+  // Only the agentic-token rail returns an expiry. The UI applies its own timer otherwise.
+  expiresAt?: string;
 };
