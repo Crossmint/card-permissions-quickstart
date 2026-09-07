@@ -20,6 +20,7 @@ import { fetchAllData } from "@/lib/crossmint-api";
 import type { AgentCardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { activeCardRail, isUsable, railLabel } from "@/lib/rails";
+import { CROSSMINT_ENVIRONMENT } from "@/lib/crossmint-env";
 
 type AgentStage = "idle" | "planning" | "checking" | "securing" | "ready" | "error";
 
@@ -410,7 +411,7 @@ export default function AgentDemoPage() {
           </div>
 
           <p className="px-1 text-[11px] leading-4 text-[#00150d]/35">
-            The conversation and checkout are simulated. Card credentials are retrieved from the staging API.
+            The conversation and checkout are simulated. Card credentials are retrieved from the Crossmint {CROSSMINT_ENVIRONMENT} API.
           </p>
         </aside>
       </div>

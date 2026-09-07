@@ -8,6 +8,7 @@ import { useCrossmint } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
 import { isUsable } from "@/lib/rails";
+import { IS_PRODUCTION } from "@/lib/crossmint-env";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
 import { IssueCardPermission } from "@/components/issue-card-permission";
@@ -248,7 +249,7 @@ export default function Page() {
               />
               <div className="shrink-0 mt-1">
                 {showSaveCard
-                  ? <TestCardHint />
+                  ? !IS_PRODUCTION && <TestCardHint />
                   : savedCards.length > 0 && <ViewSwitch view={cardViewMode} onChange={setCardViewMode} />
                 }
               </div>

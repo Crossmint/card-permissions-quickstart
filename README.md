@@ -86,4 +86,7 @@ bun dev
 ```
 
 ## Using in production
-1. Create a [production API key](https://docs.crossmint.com/introduction/platform/api-keys/client-side).
+1. Create a [production API key](https://docs.crossmint.com/introduction/platform/api-keys/client-side) and set it as `NEXT_PUBLIC_CROSSMINT_CLIENT_API_KEY`. The app reads the key prefix to pick the environment: `ck_staging_` calls `staging.crossmint.com`, `ck_production_` calls `www.crossmint.com`. See `lib/crossmint-env.ts`.
+2. Use a live Stytch project and add your production URL to its redirect URLs.
+3. Register your Stytch project in the Crossmint production console under "3P Auth providers".
+4. In production only real cards work. The staging test cards are rejected and the test card hint is hidden. Cards the networks do not support fall back to the `encrypted-card` rail.
