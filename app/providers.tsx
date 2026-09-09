@@ -5,6 +5,7 @@ import {
   CrossmintProvider,
   CrossmintWalletProvider,
 } from "@crossmint/client-sdk-react-ui";
+import { CROSSMINT_API_KEY } from "@/lib/crossmint-env";
 
 const stytch = createStytchClient(
   process.env.NEXT_PUBLIC_STYTCH_PUBLIC_TOKEN!
@@ -13,7 +14,7 @@ const stytch = createStytchClient(
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <StytchProvider stytch={stytch}>
-      <CrossmintProvider apiKey={process.env.NEXT_PUBLIC_CROSSMINT_CLIENT_API_KEY!}>
+      <CrossmintProvider apiKey={CROSSMINT_API_KEY}>
         <CrossmintWalletProvider>
           {children}
         </CrossmintWalletProvider>

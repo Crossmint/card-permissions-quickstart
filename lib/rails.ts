@@ -5,7 +5,7 @@ import type { AgenticTokenRail, OrderIntentRail, OrderIntentResponse } from "@/l
 
 /**
  * The active rail that can mint a card credential, if any.
- * Prefer the agentic-token network rail (one-time card number).
+ * Prefer the agentic-token rail (one-time card number).
  * Fall back to encrypted-card (works for any eligible card).
  */
 export function activeCardRail(intent: OrderIntentResponse): OrderIntentRail | undefined {
@@ -37,9 +37,10 @@ export function railErrorCode(intent: OrderIntentResponse): string | undefined {
   return (intent.rails ?? []).find((rail) => rail.status === "error")?.error?.code ?? undefined;
 }
 
+/** Rail name as the API returns it, with the provider code when present. */
 export function railLabel(rail: OrderIntentRail): string {
-  if (rail.rail === "encrypted-card") return "Encrypted card";
-  return rail.provider === "vic" ? "Visa" : "Mastercard";
+  if (rail.rail === "encrypted-card") return "encrypted-card";
+  return `agentic-token · ${rail.provider}`;
 }
 
 /**

@@ -4,10 +4,11 @@ import { useState } from "react";
 import { CreditCard, Plus, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
-import { activeCardRail, isUsable, needsVerification, railErrorCode, railLabel, toVerifiableOrderIntent } from "@/lib/rails";
+import { activeCardRail, isUsable, needsVerification, pendingAgenticRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
+import { RailBadge } from "./rail-badge";
 
 export function allowanceLimit(orderIntent: OrderIntentResponse) {
   const { available, total, currency } = orderIntent.amount;
@@ -27,15 +28,11 @@ function StatusPill({ orderIntent }: { orderIntent: OrderIntentResponse }) {
   }
   const rail = activeCardRail(orderIntent);
   if (rail) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-[#00150d]/40 border border-[rgba(0,0,0,0.15)] px-2.5 py-1 rounded-[6px]">
-        <ShieldCheck className="size-3 shrink-0" />
-        {railLabel(rail)}
-      </span>
-    );
+    return <RailBadge rail={rail.rail} provider={rail.rail === "agentic-token" ? rail.provider : undefined} status="active" />;
   }
-  if (needsVerification(orderIntent)) {
-    return <span className="text-xs font-medium text-[#9A6700]">Needs verification</span>;
+  const pending = pendingAgenticRail(orderIntent);
+  if (pending && needsVerification(orderIntent)) {
+    return <RailBadge rail="agentic-token" provider={pending.provider} status="pending_verification" />;
   }
   const code = railErrorCode(orderIntent);
   return (
@@ -88,51 +85,54 @@ function OrderIntentItem({
   const pending = verifiable !== null;
   const expiry = expiryLabel(orderIntent);
 
+  // One card per allowance. While it needs verification, the action lives inside
+  // the card. A failed verification turns the whole card red, message included.
+  const tone = error
+    ? "bg-[#FDF2F2] border border-[#F4C7C7]"
+    : pending
+      ? "bg-[#FFF8E1] border border-[#E6C87A]"
+      : "bg-[#F6F6F6] border border-transparent";
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3 rounded-lg bg-[#F6F6F6] px-4 py-3">
-        <CreditCard className="size-5 text-[#2377FF] shrink-0" />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-[#00150d] truncate">{orderIntent.description || "Card Permission"}</div>
-          <div className="text-xs text-[#00150d]/50">
-            {allowanceLimit(orderIntent)}
-            {orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
-            {expiry ? ` · ${expiry}` : ""}
+      <div className={`rounded-lg px-4 py-3 ${tone}`}>
+        <div className="flex items-center gap-3">
+          <CreditCard className={`size-5 shrink-0 ${error ? "text-[#B42318]" : "text-[#2377FF]"}`} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-[#00150d] truncate">{orderIntent.description || "Card Permission"}</div>
+            <div className="text-xs text-[#00150d]/50">
+              {allowanceLimit(orderIntent)}
+              {orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
+              {expiry ? ` · ${expiry}` : ""}
+            </div>
           </div>
+          <StatusPill orderIntent={orderIntent} />
+          {pending && (
+            <button
+              type="button"
+              onClick={() => { setError(""); setVerifying(true); }}
+              disabled={verifying || confirming}
+              className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {verifying || confirming ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
+              {error ? "Try again" : "Verify"}
+            </button>
+          )}
+          {cancelling
+            ? <Loader2 className="size-3.5 animate-spin text-[#00150d]/40" />
+            : <DotsMenu onDelete={handleCancel} deleteLabel="Cancel allowance" />}
         </div>
-        <StatusPill orderIntent={orderIntent} />
-        {cancelling
-          ? <Loader2 className="size-3.5 animate-spin text-[#00150d]/40" />
-          : <DotsMenu onDelete={handleCancel} deleteLabel="Cancel allowance" />}
-      </div>
 
-      {pending && (
-        <div
-          className={`flex items-center justify-between gap-3 pl-3 pr-2 py-2 rounded-md border ${
-            error ? "bg-[#FDF2F2] border-[#F4C7C7]" : "bg-[#FFF8E1] border-[#E6C87A]"
-          }`}
-        >
-          <div className={`flex items-center gap-2 text-xs ${error ? "text-[#B42318]" : "text-[#9A6700]"}`}>
-            {(verifying || confirming) && <Loader2 className="size-3.5 animate-spin shrink-0" />}
-            <span>
-              {confirming
-                ? "Confirming with Crossmint..."
-                : verifying
-                  ? "Complete the verification with your bank..."
-                  : error || "Verify this allowance with your bank before the agent can pay."}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => { setError(""); setVerifying(true); }}
-            disabled={verifying || confirming}
-            className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-          >
-            <ShieldCheck className="size-3.5" />
-            {error ? "Try again" : "Verify"}
-          </button>
-        </div>
-      )}
+        {pending && (
+          <p className={`mt-2 text-xs leading-4 ${error ? "text-[#B42318]" : "text-[#9A6700]"}`}>
+            {confirming
+              ? "Confirming with Crossmint..."
+              : verifying
+                ? "Complete the verification with your bank..."
+                : error || "Not usable yet. Verify this allowance with your bank before the agent can pay."}
+          </p>
+        )}
+      </div>
 
       {verifying && verifiable && (
         <OrderIntentVerification
@@ -141,6 +141,8 @@ function OrderIntentItem({
           appearance={verificationAppearance}
           onVerificationComplete={() => void finishVerification()}
           onVerificationError={(err) => {
+            // Forwarded to the dev server log by Next, so the real cause is visible there.
+            console.error("Verification error:", err);
             setVerifying(false);
             // The user closing the bank prompt is not a failure.
             const message = err instanceof Error ? err.message : "";
@@ -160,7 +162,6 @@ export function OrderIntentsList({
   onUpdated,
   onCancel,
   onIssueCardPermission,
-  viewMode = "ui",
 }: {
   orderIntents: OrderIntentResponse[];
   loading: boolean;
@@ -168,7 +169,6 @@ export function OrderIntentsList({
   onUpdated: (orderIntent: OrderIntentResponse) => void;
   onCancel: (orderIntent: OrderIntentResponse) => Promise<void>;
   onIssueCardPermission?: () => void;
-  viewMode?: "ui" | "code";
 }) {
   if (loading) {
     return (
@@ -193,14 +193,6 @@ export function OrderIntentsList({
           Create allowance
         </span>
       </button>
-    );
-  }
-
-  if (viewMode === "code") {
-    return (
-      <pre className="rounded-lg bg-black/[0.02] p-3 text-xs font-mono text-[#00150d] overflow-auto max-h-96">
-        {JSON.stringify(orderIntents, null, 2)}
-      </pre>
     );
   }
 
