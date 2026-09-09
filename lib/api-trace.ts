@@ -23,26 +23,6 @@ export type ApiTrace = {
   responseBody?: unknown;
 };
 
-const DOCS_BASE = "https://docs.crossmint.com/api-reference/agentic-commerce";
-
-/** Best-effort docs link for an endpoint. */
-export function docsUrlFor(method: HttpMethod, path: string): string {
-  if (path.endsWith("/credentials")) return `${DOCS_BASE}/order-intents/create-credentials`;
-  if (path.endsWith("/order-intent-registration")) {
-    return method === "PUT"
-      ? `${DOCS_BASE}/payment-methods/register-payment-method`
-      : `${DOCS_BASE}/payment-methods/get-registration`;
-  }
-  if (path.startsWith("/order-intents/")) {
-    return method === "DELETE" ? `${DOCS_BASE}/order-intents/cancel-order-intent` : `${DOCS_BASE}/order-intents/get-order-intent`;
-  }
-  if (path === "/order-intents") {
-    return method === "POST" ? `${DOCS_BASE}/order-intents/create-order-intent` : `${DOCS_BASE}/order-intents/list-order-intents`;
-  }
-  if (path.startsWith("/payment-methods/")) return `${DOCS_BASE}/payment-methods/delete-payment-method`;
-  return `${DOCS_BASE}/payment-methods/list-payment-methods`;
-}
-
 // ─── Redaction ──────────────────────────────────────────────────────────────
 
 /** Keep the key prefix so the environment stays readable, hide the rest. */

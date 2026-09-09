@@ -6,9 +6,8 @@
 // response underneath.
 
 import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, Copy, ExternalLink } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import type { ApiTrace } from "@/lib/api-trace";
-import { docsUrlFor } from "@/lib/api-trace";
 import { useApiLog } from "@/lib/api-log";
 import { explain, type Explained, type Step } from "@/lib/api-explain";
 import { RailBadge } from "@/components/rail-badge";
@@ -123,15 +122,6 @@ function CallCard({ trace, info }: { trace: ApiTrace; info: Explained }) {
             {name}
           </button>
         ))}
-        <a
-          href={docsUrlFor(trace.method, trace.path)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ml-auto inline-flex items-center gap-1 text-[#00150d]/55 hover:text-[#00150d]"
-        >
-          <ExternalLink className="size-3" />
-          Docs
-        </a>
       </div>
       {open && (
         <div className="mt-2 space-y-2">
