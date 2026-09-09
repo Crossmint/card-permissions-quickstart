@@ -10,6 +10,9 @@ import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
 import { RailBadge } from "./rail-badge";
 
+// Backoff between re-reads after a successful bank verification: about 6 s total.
+const CONFIRM_DELAYS_MS = [1000, 1500, 2000, 1500];
+
 // Error names @basis-theory/web-agentic throws when the user backs out of the ceremony.
 const USER_CANCELLED_ERRORS = new Set(["VerificationCancelledError", "PopupClosedError"]);
 
@@ -62,14 +65,40 @@ function OrderIntentItem({
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
 
+  // The provider may take a moment to flip the rail from pending_verification
+  // to active after the SDK reports success. Re-read with a short backoff.
   const finishVerification = async () => {
     setVerifying(false);
     setConfirming(true);
+    setError("");
     try {
-      // Re-read the intent: the rail flips from pending_verification to active.
-      onUpdated(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId));
+      let latest = orderIntent;
+      for (const delay of CONFIRM_DELAYS_MS) {
+        latest = await fetchOrderIntent(getJwt(), orderIntent.orderIntentId);
+        if (!pendingAgenticRail(latest)) break;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      onUpdated(latest);
+      if (pendingAgenticRail(latest)) {
+        setError("Verified with the bank, but Crossmint still reports pending_verification. Check again in a moment.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not confirm the verification");
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  // Re-read the intent on demand, without opening the bank flow again.
+  const checkAgain = async () => {
+    setConfirming(true);
+    setError("");
+    try {
+      const latest = await fetchOrderIntent(getJwt(), orderIntent.orderIntentId);
+      onUpdated(latest);
+      if (pendingAgenticRail(latest)) setError("Still pending_verification. Try again in a moment, or verify again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not read the allowance");
     } finally {
       setConfirming(false);
     }
@@ -113,6 +142,16 @@ function OrderIntentItem({
             </div>
           </div>
           <StatusPill orderIntent={orderIntent} />
+          {pending && /pending_verification/.test(error) && (
+            <button
+              type="button"
+              onClick={() => void checkAgain()}
+              disabled={verifying || confirming}
+              className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] border border-[rgba(0,0,0,0.15)] text-[#00150d] hover:bg-black/[0.03] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              Check again
+            </button>
+          )}
           {pending && (
             <button
               type="button"

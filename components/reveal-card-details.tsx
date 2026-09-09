@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { CreditCard, Eye, EyeOff, Loader2, LockKeyhole } from "lucide-react";
 import type { AgentCardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
-import { activeCardRail } from "@/lib/rails";
+import { activeCardRail, clampDelay } from "@/lib/rails";
 import { RailBadge } from "./rail-badge";
 import { allowanceLimit } from "./order-intents-list";
 
@@ -61,7 +61,7 @@ export function RevealCardDetails({
 
   useEffect(() => {
     const timers = Object.entries(credentialsByOrderIntentId).map(([orderIntentId, credentials]) =>
-      window.setTimeout(() => hideDetails(orderIntentId), Math.max(0, hideAt(credentials) - Date.now())),
+      window.setTimeout(() => hideDetails(orderIntentId), clampDelay(hideAt(credentials) - Date.now())),
     );
     return () => timers.forEach((timer) => window.clearTimeout(timer));
   }, [credentialsByOrderIntentId]);

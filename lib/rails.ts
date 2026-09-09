@@ -1,5 +1,13 @@
 // Pure helpers to pick a rail from an order intent. No I/O.
 
+/** Longest delay window.setTimeout honours. Larger values fire immediately. */
+export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+/** Clamp a delay for setTimeout: never negative, never past the 32-bit limit. */
+export function clampDelay(ms: number): number {
+  return Math.min(Math.max(0, ms), MAX_TIMEOUT_MS);
+}
+
 import type { OrderIntentVerificationProps } from "@crossmint/client-sdk-react-ui";
 import type { AgenticTokenRail, OrderIntentRail, OrderIntentRegistration, OrderIntentResponse } from "@/lib/crossmint-types";
 
@@ -39,7 +47,13 @@ export function needsVerification(intent: OrderIntentResponse): boolean {
 
 /** True when the intent is active and at least one rail can mint a card. */
 export function isUsable(intent: OrderIntentResponse): boolean {
-  return intent.status === "active" && activeCardRail(intent) !== undefined;
+  return intent.status === "active" && activeCardRail(intent) !== undefined && availableAmount(intent) > 0;
+}
+
+/** Remaining balance as a number. 0 when missing or malformed. */
+export function availableAmount(intent: OrderIntentResponse): number {
+  const value = Number(intent.amount?.available);
+  return Number.isFinite(value) ? value : 0;
 }
 
 /** The first rail error code, when no rail is usable. */

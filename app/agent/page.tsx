@@ -19,7 +19,7 @@ import {
 import { fetchAllData } from "@/lib/crossmint-api";
 import type { AgentCardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
-import { activeCardRail, isUsable, railLabel } from "@/lib/rails";
+import { activeCardRail, availableAmount, clampDelay, isUsable, railLabel } from "@/lib/rails";
 import { CROSSMINT_ENVIRONMENT } from "@/lib/crossmint-env";
 
 type AgentStage = "idle" | "planning" | "checking" | "securing" | "ready" | "error";
@@ -134,7 +134,7 @@ export default function AgentDemoPage() {
     const timer = window.setTimeout(() => {
       setCredentials(null);
       setStage("idle");
-    }, Math.max(0, expiresInMs));
+    }, clampDelay(expiresInMs));
     return () => window.clearTimeout(timer);
   }, [credentials]);
 
@@ -157,11 +157,16 @@ export default function AgentDemoPage() {
     setStage("securing");
 
     try {
-      // Charge the cart total, capped at what the allowance still has available.
-      const available = Number(activeAllowance.amount.available);
-      const amount = Math.min(Number(MOCK_TOTAL_VALUE), Number.isFinite(available) ? available : Infinity).toFixed(2);
+      // The card is minted for the exact cart total. A cart above the remaining
+      // balance is a spending-rule failure, not a smaller charge.
+      const available = availableAmount(activeAllowance);
+      if (Number(MOCK_TOTAL_VALUE) > available) {
+        throw new Error(
+          `The ${MOCK_TOTAL} cart exceeds the ${available.toFixed(2)} ${activeAllowance.amount.currency.toUpperCase()} left on this allowance.`,
+        );
+      }
       const result = await revealCardCredentials(getJwt(), activeAllowance, {
-        amount,
+        amount: Number(MOCK_TOTAL_VALUE).toFixed(2),
         // Used only when the allowance has no merchant of its own.
         merchant: { name: "Whole Foods", url: "https://www.wholefoodsmarket.com", countryCode: "US" },
       });
