@@ -41,7 +41,15 @@ export function RevealCardDetails({
   const [merchantUrl, setMerchantUrl] = useState("");
   const [revealingOrderIntentId, setRevealingOrderIntentId] = useState<string | null>(null);
   const [credentialsByOrderIntentId, setCredentialsByOrderIntentId] = useState<Record<string, AgentCardCredentials>>({});
-  const [error, setError] = useState("");
+  // Keyed by orderIntentId so a failure shows under the allowance it belongs to.
+  const [errorByOrderIntentId, setErrorByOrderIntentId] = useState<Record<string, string>>({});
+  const setError = (orderIntentId: string, message: string) =>
+    setErrorByOrderIntentId((current) => {
+      const next = { ...current };
+      if (message) next[orderIntentId] = message;
+      else delete next[orderIntentId];
+      return next;
+    });
 
   const hideDetails = (orderIntentId: string) => {
     setCredentialsByOrderIntentId((current) => {
@@ -59,14 +67,14 @@ export function RevealCardDetails({
   }, [credentialsByOrderIntentId]);
 
   const revealDetails = async (orderIntent: OrderIntentResponse, options: { amount?: string; merchant?: { name: string; url: string; countryCode: string } }) => {
-    setError("");
+    setError(orderIntent.orderIntentId, "");
     setRevealingOrderIntentId(orderIntent.orderIntentId);
     try {
       const credentials = await revealCardCredentials(getJwt(), orderIntent, options);
       setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
       setExpandedOrderIntentId(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reveal card details");
+      setError(orderIntent.orderIntentId, err instanceof Error ? err.message : "Failed to reveal card details");
     } finally {
       setRevealingOrderIntentId(null);
     }
@@ -102,6 +110,7 @@ export function RevealCardDetails({
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
         const needsMerchant = !isEncrypted && !orderIntent.merchant;
+        const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
 
         return (
           <div
@@ -144,7 +153,7 @@ export function RevealCardDetails({
                   onClick={() => {
                     setExpandedOrderIntentId(isExpanded ? null : orderIntent.orderIntentId);
                     setAmount(orderIntent.amount.available);
-                    setError("");
+                    setError(orderIntent.orderIntentId, "");
                   }}
                   className="flex items-center gap-1.5 text-xs font-medium text-[#05B959] hover:text-[#049d4c]"
                 >

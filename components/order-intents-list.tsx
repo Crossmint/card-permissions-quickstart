@@ -10,6 +10,9 @@ import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
 import { RailBadge } from "./rail-badge";
 
+// Error names @basis-theory/web-agentic throws when the user backs out of the ceremony.
+const USER_CANCELLED_ERRORS = new Set(["VerificationCancelledError", "PopupClosedError"]);
+
 export function allowanceLimit(orderIntent: OrderIntentResponse) {
   const { available, total, currency } = orderIntent.amount;
   const unit = currency.toUpperCase();
@@ -74,8 +77,11 @@ function OrderIntentItem({
 
   const handleCancel = async () => {
     setCancelling(true);
+    setError("");
     try {
       await onCancel(orderIntent);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not cancel the allowance");
     } finally {
       setCancelling(false);
     }
@@ -144,9 +150,10 @@ function OrderIntentItem({
             // Forwarded to the dev server log by Next, so the real cause is visible there.
             console.error("Verification error:", err);
             setVerifying(false);
-            // The user closing the bank prompt is not a failure.
+            // The user closing or cancelling the bank prompt is not a failure.
+            // @basis-theory/web-agentic names these errors; match on the name, not the text.
+            if (err instanceof Error && USER_CANCELLED_ERRORS.has(err.name)) return;
             const message = err instanceof Error ? err.message : "";
-            if (/cancel/i.test(message)) return;
             setError(message || "Verification failed. Please try again.");
           }}
         />

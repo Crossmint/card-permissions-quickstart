@@ -85,7 +85,7 @@ function intentRails(intent?: OrderIntentResponse): RailFact[] {
     rail: rail.rail,
     provider: rail.rail === "agentic-token" ? rail.provider : undefined,
     status: rail.status,
-    code: rail.status === "error" ? rail.error.code : undefined,
+    code: rail.status === "error" ? rail.error?.code : undefined,
     preferred: rails.length > 1 && rail === preferred ? true : undefined,
   }));
 }
