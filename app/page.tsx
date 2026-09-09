@@ -7,7 +7,7 @@ import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
-import { isUsable } from "@/lib/rails";
+import { isRegistrationSettled, isUsable } from "@/lib/rails";
 import { IS_PRODUCTION } from "@/lib/crossmint-env";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
@@ -219,11 +219,13 @@ export default function Page() {
     setOrderIntents((current) => current.filter((intent) => intent.orderIntentId !== orderIntent.orderIntentId));
   };
 
-  const registeredCards = savedCards.filter((card) => registrations[card.paymentMethodId]);
+  // A card backs allowances once its registration has settled: rails enabled,
+  // or all in error (the API then assigns encrypted-card). Pending does not count.
+  const registeredCards = savedCards.filter((card) => isRegistrationSettled(registrations[card.paymentMethodId]));
   const hasRegisteredCard = registeredCards.length > 0;
   // The card picked in step 01 is the default for step 02, when it is registered.
   const selectedCard = savedCards.find((card) => card.paymentMethodId === selectedCardId) ?? savedCards[0];
-  const defaultIssueCard = selectedCard && registrations[selectedCard.paymentMethodId] ? selectedCard : registeredCards[0];
+  const defaultIssueCard = selectedCard && isRegistrationSettled(registrations[selectedCard.paymentMethodId]) ? selectedCard : registeredCards[0];
   const visibleOrderIntents = orderIntents.filter((orderIntent) => orderIntent.status !== "cancelled");
   const usableOrderIntents = visibleOrderIntents.filter(isUsable);
 

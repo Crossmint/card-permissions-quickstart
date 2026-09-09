@@ -11,7 +11,7 @@ import { DotsMenu } from "./dots-menu";
 import { RailBadge } from "./rail-badge";
 import type { OrderIntentRegistration, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { registerCard } from "@/lib/crossmint-api";
-import { waitForRegistration } from "@/lib/wait-for-registration";
+import { RegistrationPendingError, waitForRegistration } from "@/lib/wait-for-registration";
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -29,7 +29,17 @@ function cardExpiry(card: PaymentMethodResponse) {
 }
 
 /** The rail a registered card pays through, with a one-line description. */
-function RailDetail({ registration }: { registration: OrderIntentRegistration }) {
+function RailDetail({
+  registration,
+  checking,
+  checkMessage,
+  onCheckAgain,
+}: {
+  registration: OrderIntentRegistration;
+  checking: boolean;
+  checkMessage: string;
+  onCheckAgain: () => void;
+}) {
   const enabled = registration.rails.filter((rail) => rail.status === "enabled");
   const pending = registration.rails.some((rail) => rail.status === "pending");
 
@@ -49,10 +59,25 @@ function RailDetail({ registration }: { registration: OrderIntentRegistration })
   }
 
   if (pending) {
+    // Nothing polls in the background. The user asks for a re-check.
     return (
-      <div className="flex items-center gap-2 text-xs text-[#9A6700]">
-        <Loader2 className="size-3.5 shrink-0 animate-spin" />
-        Rail status is pending. Polling the registration…
+      <div className="flex items-center justify-between gap-3 rounded-md border border-[#E6C87A] bg-[#FFF8E1] pl-3 pr-2 py-2">
+        <div className="flex items-center gap-2 text-xs text-[#9A6700]">
+          {checking && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+          <span>
+            {checking
+              ? "GET /payment-methods/{id}/order-intent-registration…"
+              : checkMessage || "Rail status is pending. The card networks have not finished enrolling this card. Step 02 stays locked until they do."}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onCheckAgain}
+          disabled={checking}
+          className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          Check again
+        </button>
       </div>
     );
   }
@@ -108,6 +133,8 @@ export function SavedCardsList({
   const [deleting, setDeleting] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [checkMessage, setCheckMessage] = useState("");
   const selectorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -168,12 +195,38 @@ export function SavedCardsList({
       const jwt = getJwt();
       const initial = await registerCard(jwt, pmId, email);
       await waitForRegistration(jwt, pmId, initial);
+    } catch (err) {
+      if (!(err instanceof RegistrationPendingError)) {
+        console.error("Registration failed:", err);
+        setRegisterError(err instanceof Error ? err.message : "Registration failed. Please try again.");
+        setRegistering(false);
+        return;
+      }
+      // Registered, rails still pending: the pending state below takes over.
+    }
+    await onRegistrationComplete?.();
+    setRegistering(false);
+  };
+
+  // Re-poll a pending registration on demand. Does not repeat the PUT.
+  const handleCheckAgain = async () => {
+    if (!registration) return;
+    setChecking(true);
+    setCheckMessage("");
+    try {
+      await waitForRegistration(getJwt(), pmId, registration);
       await onRegistrationComplete?.();
     } catch (err) {
-      console.error("Registration failed:", err);
-      setRegisterError(err instanceof Error ? err.message : "Registration failed. Please try again.");
+      setCheckMessage(
+        err instanceof RegistrationPendingError
+          ? "Still pending. Give the card networks a moment and check again."
+          : err instanceof Error
+            ? err.message
+            : "Could not read the registration.",
+      );
+      if (err instanceof RegistrationPendingError) await onRegistrationComplete?.();
     } finally {
-      setRegistering(false);
+      setChecking(false);
     }
   };
 
@@ -243,7 +296,7 @@ export function SavedCardsList({
       {/* Selected card: its rail, or the one-time registration */}
       {registration ? (
         <div className="px-1">
-          <RailDetail registration={registration} />
+          <RailDetail registration={registration} checking={checking} checkMessage={checkMessage} onCheckAgain={() => void handleCheckAgain()} />
         </div>
       ) : (
         <div

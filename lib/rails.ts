@@ -1,7 +1,17 @@
 // Pure helpers to pick a rail from an order intent. No I/O.
 
 import type { OrderIntentVerificationProps } from "@crossmint/client-sdk-react-ui";
-import type { AgenticTokenRail, OrderIntentRail, OrderIntentResponse } from "@/lib/crossmint-types";
+import type { AgenticTokenRail, OrderIntentRail, OrderIntentRegistration, OrderIntentResponse } from "@/lib/crossmint-types";
+
+/**
+ * True when the card networks have finished with this card: every rail is
+ * enabled or in error, none is still pending. Only a settled registration
+ * can back an allowance, whichever rail the API then assigns.
+ */
+export function isRegistrationSettled(registration: OrderIntentRegistration | null | undefined): boolean {
+  if (!registration) return false;
+  return registration.rails.length > 0 && !registration.rails.some((rail) => rail.status === "pending");
+}
 
 /**
  * The active rail that can mint a card credential, if any.
