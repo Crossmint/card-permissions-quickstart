@@ -149,16 +149,11 @@ export function ApiTimeline({ step: currentStep }: { step: Step }) {
         <span className="text-[11px] text-[#00150d]/45">{inStep.length} in this step</span>
       </div>
 
-      {STEPS.filter(({ step }) => step === currentStep).map(({ step, title, placeholder, example }) => {
+      {STEPS.filter(({ step }) => step === currentStep).map(({ step, placeholder, example }) => {
         const own = rows.filter((row) => row.info.step === step);
         const visible = own;
         return (
           <section key={step} className="space-y-2">
-            <h3 className="flex items-baseline gap-1.5 font-[family-name:var(--font-heading)] text-[13px] font-medium text-[#00150d]">
-              <span className="opacity-40">0{step}</span>
-              {title}
-              {visible.length > 0 && <span className="ml-auto text-[11px] font-normal text-[#00150d]/40">{own.length}</span>}
-            </h3>
             {visible.length === 0 ? (
               <div className="rounded-[8px] border border-dashed border-[rgba(0,0,0,0.12)] px-3 py-2.5 text-[11.5px] leading-[16px] text-[#00150d]/45">
                 {placeholder} <span className="font-mono">{example}</span>
