@@ -26,7 +26,7 @@ const METHOD_TONE: Record<ApiTrace["method"], string> = {
 };
 
 function statusTone(status: number) {
-  if (status >= 500) return "text-[#B42318]";
+  if (status === 0 || status >= 500) return "text-[#B42318]";
   if (status >= 400) return "text-[#9A6700]";
   return "text-[#0B7A3E]";
 }
@@ -81,7 +81,7 @@ function CallCard({ trace, info }: { trace: ApiTrace; info: Explained }) {
         <span className="min-w-0 flex-1 break-all font-mono text-[11.5px] leading-4 text-[#00150d]" title={trace.url}>
           {trace.path}
         </span>
-        <span className={`shrink-0 font-mono text-[11.5px] font-semibold ${statusTone(trace.status)}`}>{trace.status}</span>
+        <span className={`shrink-0 font-mono text-[11.5px] font-semibold ${statusTone(trace.status)}`}>{trace.status === 0 ? "no response" : trace.status}</span>
         <span className="shrink-0 font-mono text-[10.5px] text-[#00150d]/40">{trace.durationMs} ms</span>
       </div>
 

@@ -111,11 +111,41 @@ async function crossmintFetch(method: HttpMethod, path: string, jwt: string, req
 
   if (requestBody !== undefined) log(`${method} ${path} → request body`, redactBody(requestBody));
 
-  const res = await fetch(url, {
+  const baseTrace = {
+    id: `${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    at: new Date(started).toISOString(),
     method,
-    headers: reqHeaders,
-    body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
-  });
+    url,
+    path,
+    requestHeaders: redactHeaders(reqHeaders),
+    requestBody: requestBody === undefined ? undefined : redactBody(requestBody),
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: reqHeaders,
+      body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
+    });
+  } catch (err) {
+    // No HTTP response: DNS, connection refused, TLS, tunnel down. Node's
+    // fetch hides the reason in `cause`. Record it as status 0 so the failed
+    // call still shows up, then fail with a message that names the call.
+    const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : err instanceof Error ? err.message : String(err);
+    const trace: ApiTrace = {
+      ...baseTrace,
+      status: 0,
+      ok: false,
+      durationMs: Date.now() - started,
+      responseHeaders: {},
+      responseBody: { _raw: `No response from ${new URL(url).host}: ${cause}` },
+    };
+    traceStore.getStore()?.push(trace);
+    log(`${method} ${path} → no response`, { cause });
+    throw new Error(`${method} ${path} failed before a response: ${cause}`);
+  }
+
   const text = await res.text().catch(() => "");
   const body = parseBody(text);
 
@@ -126,13 +156,7 @@ async function crossmintFetch(method: HttpMethod, path: string, jwt: string, req
   }
 
   const trace: ApiTrace = {
-    id: `${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    at: new Date(started).toISOString(),
-    method,
-    url,
-    path,
-    requestHeaders: redactHeaders(reqHeaders),
-    requestBody: requestBody === undefined ? undefined : redactBody(requestBody),
+    ...baseTrace,
     status: res.status,
     ok: res.ok,
     durationMs: Date.now() - started,
@@ -283,13 +307,19 @@ export type AllData = {
   cards: PaymentMethodResponse[];
   orderIntents: OrderIntentResponse[];
   registrations: Record<string, OrderIntentRegistration | null>;
+  /** Set when GET /order-intents failed. Cards still load; allowances are unknown, not empty. */
+  orderIntentsError?: string;
 };
 
 export async function fetchAllData(jwt: string): Promise<ActionResult<AllData>> {
   return traced(async () => {
+    let orderIntentsError: string | undefined;
     const [cards, orderIntents] = await Promise.all([
       listPaymentMethods(jwt),
-      listOrderIntents(jwt).catch(() => [] as OrderIntentResponse[]),
+      listOrderIntents(jwt).catch((err: unknown) => {
+        orderIntentsError = err instanceof Error ? err.message : String(err);
+        return [] as OrderIntentResponse[];
+      }),
     ]);
 
     // Fan out registration checks for each saved card in parallel.
@@ -305,8 +335,8 @@ export async function fetchAllData(jwt: string): Promise<ActionResult<AllData>> 
     );
     const registrations = Object.fromEntries(registrationEntries);
 
-    log("fetchAllData → summary", { cardCount: cards.length, orderIntentCount: orderIntents.length });
-    return { cards, orderIntents, registrations };
+    log("fetchAllData → summary", { cardCount: cards.length, orderIntentCount: orderIntents.length, orderIntentsError });
+    return { cards, orderIntents, registrations, ...(orderIntentsError ? { orderIntentsError } : {}) };
   });
 }
 

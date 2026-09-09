@@ -63,6 +63,10 @@ function relativeExpiry(iso?: string): string | undefined {
 
 function errorMessage(trace: ApiTrace): string | undefined {
   if (trace.ok) return undefined;
+  if (trace.status === 0) {
+    const body = trace.responseBody as { _raw?: string } | undefined;
+    return body?._raw ?? "No response from the API.";
+  }
   const body = trace.responseBody as { message?: string | string[]; error?: string; _raw?: string } | undefined;
   const message = Array.isArray(body?.message) ? body.message.join("; ") : body?.message ?? body?.error ?? body?._raw;
   return message ? `${trace.status}: ${message}` : `HTTP ${trace.status}`;
@@ -106,6 +110,13 @@ function intentFacts(intent: OrderIntentResponse | undefined, rails: RailFact[])
 }
 
 export function explain(trace: ApiTrace): Explained {
+  const info = explainCall(trace);
+  // A failed call is always part of the story, even a background read.
+  const expected404 = trace.status === 404 && trace.path.endsWith("/order-intent-registration");
+  return trace.ok || expected404 ? info : { ...info, important: true };
+}
+
+function explainCall(trace: ApiTrace): Explained {
   const step = stepForPath(trace.path);
   const error = errorMessage(trace);
   const req = trace.requestBody as Record<string, unknown> | undefined;

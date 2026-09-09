@@ -158,6 +158,8 @@ export default function Page() {
   const [issuingForCard, setIssuingForCard] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Cards loaded but the allowance list did not. Shown as a warning, not as "no allowances".
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     const jwt = stytch.session.getTokens()?.session_jwt ?? "";
@@ -168,6 +170,7 @@ export default function Page() {
       setOrderIntents(data.orderIntents);
       setRegistrations(data.registrations);
       setLoadError(null);
+      setLoadWarning(data.orderIntentsError ?? null);
     } catch (err) {
       console.error("Failed to fetch profile data:", err);
       setLoadError(err instanceof Error ? err.message : String(err));
@@ -305,9 +308,17 @@ export default function Page() {
             <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 text-sm text-red-800">
               <p className="font-medium">Could not load your cards and allowances</p>
               <p className="mt-1 break-words font-mono text-xs">{loadError}</p>
-              <p className="mt-2 text-xs text-red-800/80">
-                A 403 from a client-side API key usually means this origin is not in the key&apos;s allowed origins in the Crossmint console.
-              </p>
+              {loadError.includes("(403)") && (
+                <p className="mt-2 text-xs text-red-800/80">
+                  A 403 from a client-side API key usually means this origin is not in the key&apos;s allowed origins in the Crossmint console.
+                </p>
+              )}
+            </div>
+          )}
+          {!loadError && loadWarning && (
+            <div className="rounded-[10px] border border-[#E6C87A] bg-[#FFF8E1] p-4 text-sm text-[#9A6700]">
+              <p className="font-medium">Cards loaded, but the allowance list did not</p>
+              <p className="mt-1 break-words font-mono text-xs">{loadWarning}</p>
             </div>
           )}
 
