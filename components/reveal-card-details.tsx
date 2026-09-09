@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { CreditCard, Eye, EyeOff, Loader2, LockKeyhole } from "lucide-react";
 import type { AgentCardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
-import { activeCardRail, railLabel } from "@/lib/rails";
+import { activeCardRail } from "@/lib/rails";
+import { RailBadge } from "./rail-badge";
 import { allowanceLimit } from "./order-intents-list";
 
 // The encrypted-card rail returns no expiry. Hide those details after a fixed time.
@@ -112,10 +113,11 @@ export function RevealCardDetails({
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-[#00150d] truncate">{orderIntent.description || "Agent card allowance"}</div>
                 <div className="text-xs text-[#00150d]/50">
-                  {allowanceLimit(orderIntent)} · {railLabel(rail)}
+                  {allowanceLimit(orderIntent)}
                   {orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
                 </div>
               </div>
+              <RailBadge rail={rail.rail} provider={rail.rail === "agentic-token" ? rail.provider : undefined} compact />
               {credentials ? (
                 <button
                   type="button"
@@ -235,6 +237,10 @@ export function RevealCardDetails({
 
             {credentials && (
               <div className="border-t border-[rgba(0,0,0,0.08)] p-4 space-y-3">
+                <div className="flex items-center gap-3 text-[11px] text-[#00150d]/60">
+                  <span>Delivered on</span>
+                  <RailBadge rail={credentials.rail} provider={rail.rail === "agentic-token" ? rail.provider : undefined} compact />
+                </div>
                 <div>
                   <div className="text-xs text-[#00150d]/50 mb-1">
                     {credentials.rail === "encrypted-card" ? "Card number (decrypted in your browser)" : "One-time agent card number"}
