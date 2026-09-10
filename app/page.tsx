@@ -7,7 +7,7 @@ import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
-import { isRegistrationSettled, isUsable } from "@/lib/rails";
+import { activeCardRail, isRegistrationSettled, isUsable } from "@/lib/rails";
 import { IS_PRODUCTION } from "@/lib/crossmint-env";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
@@ -231,6 +231,8 @@ export default function Page() {
   const defaultIssueCard = selectedCard && isRegistrationSettled(registrations[selectedCard.paymentMethodId]) ? selectedCard : registeredCards[0];
   const visibleOrderIntents = orderIntents.filter((orderIntent) => orderIntent.status !== "cancelled");
   const usableOrderIntents = visibleOrderIntents.filter(isUsable);
+  // Step 03 also lists exhausted allowances, so the user sees the balance reach zero.
+  const revealableOrderIntents = visibleOrderIntents.filter((intent) => intent.status === "active" && activeCardRail(intent) !== undefined);
 
   // One step is shown at a time. A step unlocks when the previous one has
   // produced what it needs: a registered card for 02, a usable allowance for 03.
@@ -238,10 +240,10 @@ export default function Page() {
   const unlocked: Record<StepNumber, boolean> = {
     1: true,
     2: hasRegisteredCard,
-    3: usableOrderIntents.length > 0,
+    3: revealableOrderIntents.length > 0,
   };
   // The furthest step the data allows. Used to land on the right step after load.
-  const furthestStep: StepNumber = !hasRegisteredCard ? 1 : usableOrderIntents.length === 0 ? 2 : 3;
+  const furthestStep: StepNumber = !hasRegisteredCard ? 1 : revealableOrderIntents.length === 0 ? 2 : 3;
 
   useEffect(() => {
     if (loading || landed) return;
@@ -410,9 +412,10 @@ export default function Page() {
               subtitle="Retrieve card details when your agent is ready to pay. Uses the network rail, or the encrypted-card fallback."
             />
             <RevealCardDetails
-              orderIntents={usableOrderIntents}
+              orderIntents={revealableOrderIntents}
               loading={loading}
               getJwt={getJwt}
+              onUpdated={upsertOrderIntent}
             />
 
             <StepNav current={3} unlocked={unlocked} onGo={goTo} />

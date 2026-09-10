@@ -6,7 +6,8 @@ import type { AgentCardCredentials, OrderIntentResponse } from "@/lib/crossmint-
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { activeCardRail, clampDelay } from "@/lib/rails";
 import { RailBadge } from "./rail-badge";
-import { allowanceLimit } from "./order-intents-list";
+import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
+import { fetchOrderIntent } from "@/lib/crossmint-api";
 
 // The encrypted-card rail returns no expiry. Hide those details after a fixed time.
 const FALLBACK_HIDE_MS = 5 * 60 * 1000;
@@ -30,10 +31,13 @@ export function RevealCardDetails({
   orderIntents,
   loading,
   getJwt,
+  onUpdated,
 }: {
   orderIntents: OrderIntentResponse[];
   loading: boolean;
   getJwt: () => string;
+  /** Called with the re-read allowance after a card is minted, so the balance updates. */
+  onUpdated?: (orderIntent: OrderIntentResponse) => void;
 }) {
   const [expandedOrderIntentId, setExpandedOrderIntentId] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -73,6 +77,14 @@ export function RevealCardDetails({
       const credentials = await revealCardCredentials(getJwt(), orderIntent, options);
       setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
       setExpandedOrderIntentId(null);
+      // Minting reserves the amount. Re-read so the balance shown goes down.
+      if (onUpdated) {
+        try {
+          onUpdated(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId));
+        } catch (err) {
+          console.error("Could not refresh the allowance after minting:", err);
+        }
+      }
     } catch (err) {
       setError(orderIntent.orderIntentId, err instanceof Error ? err.message : "Failed to reveal card details");
     } finally {
@@ -111,6 +123,8 @@ export function RevealCardDetails({
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
         const needsMerchant = !isEncrypted && !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
+        const exhausted = isExhausted(orderIntent);
+        const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
 
         return (
           <div
@@ -126,8 +140,12 @@ export function RevealCardDetails({
                   {orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
                 </div>
               </div>
-              <RailBadge rail={rail.rail} provider={rail.rail === "agentic-token" ? rail.provider : undefined} compact />
-              {credentials ? (
+              {exhausted && !credentials ? (
+                <ExhaustedPill orderIntent={orderIntent} />
+              ) : (
+                <RailBadge rail={rail.rail} provider={rail.rail === "agentic-token" ? rail.provider : undefined} compact />
+              )}
+              {exhausted && !credentials ? null : credentials ? (
                 <button
                   type="button"
                   onClick={() => hideDetails(orderIntent.orderIntentId)}
@@ -163,6 +181,12 @@ export function RevealCardDetails({
               )}
             </div>
 
+            {exhausted && !credentials && (
+              <p className="px-4 py-3 text-xs text-[#00150d]/60">
+                Each one-time card reserves its amount. Create a new allowance to mint another.
+              </p>
+            )}
+
             {isEncrypted && error && revealingOrderIntentId === null && !credentials && (
               <p className="px-4 py-3 text-xs text-red-600 break-words">{error}</p>
             )}
@@ -192,6 +216,9 @@ export function RevealCardDetails({
                     </button>
                   </div>
                 )}
+                <p className="text-xs text-[#00150d]/60">
+                  This amount is reserved from the allowance. {availableLabel} available.
+                </p>
                 <div>
                   <label className="text-xs font-medium text-[#00150d]/60 block mb-1">
                     Charge amount ({orderIntent.amount.currency.toUpperCase()})

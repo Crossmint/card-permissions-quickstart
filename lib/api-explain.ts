@@ -205,5 +205,16 @@ function explainCall(trace: ApiTrace): Explained {
   }
   const intent = trace.ok ? (res as unknown as OrderIntentResponse) : undefined;
   const rails = intentRails(intent);
+  const reserved = Number(intent?.amount?.reserved ?? 0);
+  const spent = Number(intent?.amount?.spent ?? 0);
+  if (intent && (reserved > 0 || spent > 0)) {
+    const unit = intent.amount.currency.toUpperCase();
+    const facts = [
+      reserved > 0 ? `${intent.amount.reserved} ${unit} reserved by one-time cards.` : "",
+      spent > 0 ? `${intent.amount.spent} ${unit} charged by merchants.` : "",
+      `${intent.amount.available} of ${intent.amount.total} ${unit} left.`,
+    ].filter(Boolean);
+    return { step, important: true, title: "Re-read the allowance after minting. The balance goes down.", facts, rails, error };
+  }
   return { step, important: false, title: "Re-read the allowance. Rail status and balance come live from the provider.", facts: intentFacts(intent, rails), rails, error };
 }

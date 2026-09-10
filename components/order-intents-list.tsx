@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CreditCard, Plus, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
-import { activeCardRail, isUsable, needsVerification, pendingAgenticRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
+import { activeCardRail, availableAmount, isUsable, needsVerification, pendingAgenticRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
@@ -16,10 +16,25 @@ const CONFIRM_DELAYS_MS = [1000, 1500, 2000, 1500];
 // Error names @basis-theory/web-agentic throws when the user backs out of the ceremony.
 const USER_CANCELLED_ERRORS = new Set(["VerificationCancelledError", "PopupClosedError"]);
 
+/** Remaining balance, always as "X of Y USD left", so the wallet is seen going down. */
 export function allowanceLimit(orderIntent: OrderIntentResponse) {
   const { available, total, currency } = orderIntent.amount;
-  const unit = currency.toUpperCase();
-  return available === total ? `${total} ${unit}` : `${available} of ${total} ${unit} left`;
+  return `${available} of ${total} ${currency.toUpperCase()} left`;
+}
+
+/** True when nothing is left to mint. */
+export function isExhausted(orderIntent: OrderIntentResponse) {
+  return availableAmount(orderIntent) <= 0;
+}
+
+/** Grey pill for an allowance with no balance left: "spent" once charged, "reserved" while held by a card. */
+export function ExhaustedPill({ orderIntent }: { orderIntent: OrderIntentResponse }) {
+  const spent = Number(orderIntent.amount.spent) > 0;
+  return (
+    <span className="inline-flex items-center rounded-[6px] border border-[rgba(0,0,0,0.12)] bg-black/[0.04] px-2 py-0.5 font-mono text-[11px] font-medium leading-4 text-[#00150d]/60">
+      {spent ? "spent" : "reserved"}
+    </span>
+  );
 }
 
 function expiryLabel(orderIntent: OrderIntentResponse) {
@@ -33,6 +48,7 @@ function StatusPill({ orderIntent }: { orderIntent: OrderIntentResponse }) {
     return <span className="text-xs text-[#00150d]/40 capitalize">{orderIntent.status}</span>;
   }
   const rail = activeCardRail(orderIntent);
+  if (rail && isExhausted(orderIntent)) return <ExhaustedPill orderIntent={orderIntent} />;
   if (rail) {
     return <RailBadge rail={rail.rail} provider={rail.rail === "agentic-token" ? rail.provider : undefined} status="active" />;
   }
