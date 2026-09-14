@@ -48,7 +48,7 @@ function StatusPill({ orderIntent }: { orderIntent: OrderIntentResponse }) {
     return <span className="text-xs text-[#00150d]/40 capitalize">{orderIntent.status}</span>;
   }
   if (isExhausted(orderIntent)) return <ExhaustedPill orderIntent={orderIntent} />;
-  const rails = orderIntent.rails.filter((rail) => rail.status !== "error" || rail.error);
+  const rails = orderIntent.rails;
   if (rails.some((rail) => rail.status !== "error")) {
     return (
       <div className="flex flex-wrap justify-end gap-1.5">

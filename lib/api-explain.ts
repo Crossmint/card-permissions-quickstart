@@ -97,12 +97,11 @@ function intentRails(intent?: OrderIntentResponse): RailFact[] {
 function intentFacts(intent: OrderIntentResponse | undefined, rails: RailFact[]): string[] {
   const facts: string[] = [];
   if (!intent) return facts;
-  if (rails.some((rail) => rail.status === "pending_verification")) {
-    const pending = rails
-      .filter((rail) => rail.status === "pending_verification")
-      .map((rail) => rail.rail)
-      .join(", ");
-    facts.push(`${pending} is pending_verification: the user verifies with their bank before the agent can use it.`);
+  if (rails.some((rail) => rail.rail === "agentic-token" && rail.status === "pending_verification")) {
+    facts.push("agentic-token is pending_verification: the user verifies with their bank before the agent can use it.");
+  }
+  if (rails.some((rail) => rail.rail === "spt" && rail.status === "pending_verification")) {
+    facts.push("spt is pending_verification. Stripe must finish verification before the agent can use it.");
   }
   if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "active")) {
     facts.push("encrypted-card is active with no verification. Always available on an active allowance.");

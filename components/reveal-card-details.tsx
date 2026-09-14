@@ -9,6 +9,7 @@ import { RailBadge } from "./rail-badge";
 import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
 
+// The encrypted-card rail returns no expiry. Hide those details after a fixed time.
 const FALLBACK_HIDE_MS = 5 * 60 * 1000;
 
 function formatCardNumber(number: string) {
@@ -26,10 +27,6 @@ function hideAt(credentials: RevealedCredentials) {
 const inputClass =
   "w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20";
 
-function railProvider(rail: RailName) {
-  return rail === "agentic-token" ? undefined : rail === "spt" ? "stripe" : undefined;
-}
-
 export function RevealCardDetails({
   orderIntents,
   loading,
@@ -39,6 +36,7 @@ export function RevealCardDetails({
   orderIntents: OrderIntentResponse[];
   loading: boolean;
   getJwt: () => string;
+  /** Called with the re-read allowance after a card is minted, so the balance updates. */
   onUpdated?: (orderIntent: OrderIntentResponse) => void;
 }) {
   const [expandedOrderIntentId, setExpandedOrderIntentId] = useState<string | null>(null);
@@ -49,6 +47,7 @@ export function RevealCardDetails({
   const [networkBusinessProfile, setNetworkBusinessProfile] = useState("");
   const [revealingOrderIntentId, setRevealingOrderIntentId] = useState<string | null>(null);
   const [credentialsByOrderIntentId, setCredentialsByOrderIntentId] = useState<Record<string, RevealedCredentials>>({});
+  // Keyed by orderIntentId so a failure shows under the allowance it belongs to.
   const [errorByOrderIntentId, setErrorByOrderIntentId] = useState<Record<string, string>>({});
 
   const setError = (orderIntentId: string, message: string) =>
@@ -84,6 +83,7 @@ export function RevealCardDetails({
       const credentials = await revealCardCredentials(getJwt(), orderIntent, options);
       setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
       setExpandedOrderIntentId(null);
+      // Minting reserves the amount. Re-read so the balance shown goes down.
       if (onUpdated) {
         try {
           onUpdated(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId));
@@ -123,23 +123,28 @@ export function RevealCardDetails({
       {orderIntents.map((orderIntent) => {
         const cardRails = activeCardRails(orderIntent);
         const spt = activeSptRail(orderIntent);
-        const options = [...cardRails.map((rail) => rail.rail), ...(spt ? ["spt" as const] : [])];
+        const options = [...cardRails, ...(spt ? [spt] : [])];
         if (options.length === 0) return null;
         const preferred = activeCardRail(orderIntent)?.rail ?? "spt";
-        const selectedRail = options.includes(selectedRailByOrderIntentId[orderIntent.orderIntentId])
-          ? selectedRailByOrderIntentId[orderIntent.orderIntentId]
-          : preferred;
+        const selectedRail =
+          options.find((rail) => rail.rail === selectedRailByOrderIntentId[orderIntent.orderIntentId]) ??
+          options.find((rail) => rail.rail === preferred) ??
+          options[0];
         const credentials = credentialsByOrderIntentId[orderIntent.orderIntentId];
+        const deliveredRail = credentials && options.find((rail) => rail.rail === credentials.rail);
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
-        const isEncrypted = selectedRail === "encrypted-card";
+        const isEncrypted = selectedRail.rail === "encrypted-card";
         const needsMerchant = !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
         const exhausted = isExhausted(orderIntent);
         const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
 
         return (
-          <div key={orderIntent.orderIntentId} className="rounded-lg border border-[rgba(0,0,0,0.08)] overflow-hidden">
+          <div
+            key={orderIntent.orderIntentId}
+            className="rounded-lg border border-[rgba(0,0,0,0.08)] overflow-hidden"
+          >
             <div className="flex items-center gap-3 bg-[#F6F6F6] px-4 py-3">
               <CreditCard className="size-5 text-[#2377FF] shrink-0" />
               <div className="min-w-0 flex-1">
@@ -153,12 +158,17 @@ export function RevealCardDetails({
                 <div className="flex items-center gap-1">
                   {options.map((rail) => (
                     <button
-                      key={rail}
+                      key={rail.rail}
                       type="button"
-                      onClick={() => setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: rail }))}
-                      aria-pressed={selectedRail === rail}
+                      onClick={() => setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: rail.rail }))}
+                      aria-pressed={selectedRail.rail === rail.rail}
                     >
-                      <RailBadge rail={rail} provider={railProvider(rail)} compact preferred={selectedRail === rail} />
+                      <RailBadge
+                        rail={rail.rail}
+                        provider={rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : undefined}
+                        compact
+                        preferred={selectedRail.rail === rail.rail}
+                      />
                     </button>
                   ))}
                 </div>
@@ -166,9 +176,13 @@ export function RevealCardDetails({
               {exhausted && !credentials ? (
                 <ExhaustedPill orderIntent={orderIntent} />
               ) : (
-                <RailBadge rail={selectedRail} provider={railProvider(selectedRail)} compact />
+                <RailBadge
+                  rail={selectedRail.rail}
+                  provider={selectedRail.rail === "agentic-token" ? selectedRail.provider : selectedRail.rail === "spt" ? "stripe" : undefined}
+                  compact
+                />
               )}
-              {credentials ? (
+              {exhausted && !credentials ? null : credentials ? (
                 <button
                   type="button"
                   onClick={() => hideDetails(orderIntent.orderIntentId)}
@@ -178,10 +192,11 @@ export function RevealCardDetails({
                   Hide details
                 </button>
               ) : isEncrypted ? (
+                // Encrypted-card needs no input: generate a keypair, fetch, decrypt.
                 <button
                   type="button"
                   disabled={isRevealing}
-                  onClick={() => void revealDetails(orderIntent, { rail: selectedRail })}
+                  onClick={() => void revealDetails(orderIntent, { rail: selectedRail.rail })}
                   className="flex items-center gap-1.5 text-xs font-medium text-[#05B959] hover:text-[#049d4c] disabled:opacity-60"
                 >
                   {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
@@ -207,17 +222,19 @@ export function RevealCardDetails({
               <p className="px-4 py-3 text-xs text-[#00150d]/60">Each credential reserves its amount. Create a new allowance to mint another.</p>
             )}
 
-            {isEncrypted && error && !credentials && <p className="px-4 py-3 text-xs text-red-600 break-words">{error}</p>}
+            {isEncrypted && error && revealingOrderIntentId === null && !credentials && (
+              <p className="px-4 py-3 text-xs text-red-600 break-words">{error}</p>
+            )}
 
             {isExpanded && !credentials && !isEncrypted && (
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
                   void revealDetails(orderIntent, {
-                    rail: selectedRail,
+                    rail: selectedRail.rail,
                     amount,
                     merchant: needsMerchant ? { name: merchantName, url: merchantUrl, countryCode: "US" } : undefined,
-                    networkBusinessProfile: selectedRail === "spt" ? networkBusinessProfile : undefined,
+                    networkBusinessProfile: selectedRail.rail === "spt" ? networkBusinessProfile : undefined,
                   });
                 }}
                 className="p-4 space-y-3"
@@ -236,7 +253,9 @@ export function RevealCardDetails({
                     </button>
                   </div>
                 )}
-                <p className="text-xs text-[#00150d]/60">This amount is reserved from the allowance. {availableLabel} available.</p>
+                <p className="text-xs text-[#00150d]/60">
+                  This amount is reserved from the allowance. {availableLabel} available.
+                </p>
                 <div>
                   <label className="text-xs font-medium text-[#00150d]/60 block mb-1">
                     Charge amount ({orderIntent.amount.currency.toUpperCase()})
@@ -255,15 +274,29 @@ export function RevealCardDetails({
                   <>
                     <div>
                       <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant name</label>
-                      <input type="text" value={merchantName} onChange={(event) => setMerchantName(event.target.value)} placeholder="e.g. Whole Foods" required className={inputClass} />
+                      <input
+                        type="text"
+                        value={merchantName}
+                        onChange={(event) => setMerchantName(event.target.value)}
+                        placeholder="e.g. Whole Foods"
+                        required
+                        className={inputClass}
+                      />
                     </div>
                     <div>
                       <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant URL</label>
-                      <input type="url" value={merchantUrl} onChange={(event) => setMerchantUrl(event.target.value)} placeholder="e.g. https://www.wholefoodsmarket.com" required className={inputClass} />
+                      <input
+                        type="url"
+                        value={merchantUrl}
+                        onChange={(event) => setMerchantUrl(event.target.value)}
+                        placeholder="e.g. https://www.wholefoodsmarket.com"
+                        required
+                        className={inputClass}
+                      />
                     </div>
                   </>
                 )}
-                {selectedRail === "spt" && (
+                {selectedRail.rail === "spt" && (
                   <div>
                     <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Stripe Network Business Profile ID</label>
                     <input type="text" value={networkBusinessProfile} onChange={(event) => setNetworkBusinessProfile(event.target.value)} required className={inputClass} />
@@ -276,7 +309,7 @@ export function RevealCardDetails({
                   className="flex items-center gap-2 text-xs font-medium text-white bg-[#05B959] hover:bg-[#049d4c] disabled:opacity-60 px-4 py-2 rounded-md transition-colors"
                 >
                   {isRevealing && <Loader2 className="size-3.5 animate-spin" />}
-                  {selectedRail === "spt" ? "Mint shared payment token" : "Mint one-time card"}
+                  {selectedRail.rail === "spt" ? "Mint shared payment token" : "Mint one-time card"}
                 </button>
               </form>
             )}
@@ -285,7 +318,17 @@ export function RevealCardDetails({
               <div className="border-t border-[rgba(0,0,0,0.08)] p-4 space-y-3">
                 <div className="flex items-center gap-3 text-[11px] text-[#00150d]/60">
                   <span>Delivered on</span>
-                  <RailBadge rail={credentials.rail} provider={railProvider(credentials.rail)} compact />
+                  <RailBadge
+                    rail={credentials.rail}
+                    provider={
+                      deliveredRail?.rail === "agentic-token"
+                        ? deliveredRail.provider
+                        : deliveredRail?.rail === "spt"
+                          ? "stripe"
+                          : undefined
+                    }
+                    compact
+                  />
                 </div>
                 {credentials.kind === "spt" ? (
                   <>
