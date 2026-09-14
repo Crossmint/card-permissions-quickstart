@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CreditCard, Plus, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
-import { activeCardRail, availableAmount, isUsable, needsVerification, pendingAgenticRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
+import { availableAmount, isUsable, needsVerification, pendingAgenticRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
@@ -47,14 +47,22 @@ function StatusPill({ orderIntent }: { orderIntent: OrderIntentResponse }) {
   if (orderIntent.status !== "active") {
     return <span className="text-xs text-[#00150d]/40 capitalize">{orderIntent.status}</span>;
   }
-  const rail = activeCardRail(orderIntent);
-  if (rail && isExhausted(orderIntent)) return <ExhaustedPill orderIntent={orderIntent} />;
-  if (rail) {
-    return <RailBadge rail={rail.rail} provider={rail.rail === "agentic-token" ? rail.provider : undefined} status="active" />;
-  }
-  const pending = pendingAgenticRail(orderIntent);
-  if (pending && needsVerification(orderIntent)) {
-    return <RailBadge rail="agentic-token" provider={pending.provider} status="pending_verification" />;
+  if (isExhausted(orderIntent)) return <ExhaustedPill orderIntent={orderIntent} />;
+  const rails = orderIntent.rails.filter((rail) => rail.status !== "error" || rail.error);
+  if (rails.some((rail) => rail.status !== "error")) {
+    return (
+      <div className="flex flex-wrap justify-end gap-1.5">
+        {rails.map((rail) => (
+          <RailBadge
+            key={`${rail.rail}-${rail.provider ?? "default"}`}
+            rail={rail.rail}
+            provider={rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : undefined}
+            status={rail.status}
+            code={rail.status === "error" ? rail.error?.code : undefined}
+          />
+        ))}
+      </div>
+    );
   }
   const code = railErrorCode(orderIntent);
   return (
@@ -133,7 +141,7 @@ function OrderIntentItem({
   };
 
   const verifiable = toVerifiableOrderIntent(orderIntent);
-  const pending = verifiable !== null;
+  const pending = needsVerification(orderIntent) && verifiable !== null;
   const expiry = expiryLabel(orderIntent);
 
   // One card per allowance. While it needs verification, the action lives inside

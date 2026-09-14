@@ -1,10 +1,6 @@
-// The one visual for "which rail". Names are the API's own: `agentic-token`
-// with its `provider` (`vic` or `agentpay`), or `encrypted-card`. Green for
-// agentic-token, blue for encrypted-card. Used in the timeline, on allowances
-// and on revealed card details, so the developer sees the same identifiers
-// as in the JSON.
+// The one visual for "which rail". Names are the API's own.
 
-import type { RailProvider } from "@/lib/crossmint-types";
+import type { RailName, RailProvider } from "@/lib/crossmint-types";
 
 type Status = "enabled" | "active" | "pending" | "pending_verification" | "error";
 
@@ -17,8 +13,9 @@ const STATUS_TEXT: Record<Status, string> = {
 };
 
 /** Rail name exactly as the API returns it, with the provider code when it has one. */
-export function railTitle(rail: "agentic-token" | "encrypted-card", provider?: RailProvider): string {
+export function railTitle(rail: RailName, provider?: RailProvider | "stripe"): string {
   if (rail === "encrypted-card") return "encrypted-card";
+  if (rail === "spt") return "spt · stripe";
   return provider ? `agentic-token · ${provider}` : "agentic-token";
 }
 
@@ -29,8 +26,8 @@ export function RailBadge({
   code,
   preferred,
 }: {
-  rail: "agentic-token" | "encrypted-card";
-  provider?: RailProvider;
+  rail: RailName;
+  provider?: RailProvider | "stripe";
   status?: Status;
   code?: string;
   preferred?: boolean;
@@ -45,7 +42,9 @@ export function RailBadge({
       ? "border-[#E6C87A] bg-[#FFF8E1] text-[#9A6700]"
       : rail === "encrypted-card"
         ? "border-[#BFD6FF] bg-[#EEF4FF] text-[#1D4ED8]"
-        : "border-[#B7E9CB] bg-[#EDFBF2] text-[#0B7A3E]";
+        : rail === "spt"
+          ? "border-[#D9C8FF] bg-[#F4EEFF] text-[#6D28D9]"
+          : "border-[#B7E9CB] bg-[#EDFBF2] text-[#0B7A3E]";
   const tooltip = [railTitle(rail, provider), status && STATUS_TEXT[status], code, preferred && "preferred"].filter(Boolean).join(" · ");
 
   return (

@@ -1,4 +1,4 @@
-// Crypto for the encrypted-card fallback rail. Runs in the browser only.
+// Crypto for the encrypted-card rail. Runs in the browser only.
 //
 // The keypair is ephemeral: it lives for one credential request. The public
 // JWK goes to Crossmint, the private key never leaves this tab. Crossmint

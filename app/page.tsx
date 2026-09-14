@@ -7,7 +7,7 @@ import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
-import { activeCardRail, isRegistrationSettled, isUsable } from "@/lib/rails";
+import { activeCardRail, activeSptRail, isRegistrationSettled, isUsable } from "@/lib/rails";
 import { IS_PRODUCTION } from "@/lib/crossmint-env";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
@@ -232,7 +232,9 @@ export default function Page() {
   const visibleOrderIntents = orderIntents.filter((orderIntent) => orderIntent.status !== "cancelled");
   const usableOrderIntents = visibleOrderIntents.filter(isUsable);
   // Step 03 also lists exhausted allowances, so the user sees the balance reach zero.
-  const revealableOrderIntents = visibleOrderIntents.filter((intent) => intent.status === "active" && activeCardRail(intent) !== undefined);
+  const revealableOrderIntents = visibleOrderIntents.filter(
+    (intent) => intent.status === "active" && (activeCardRail(intent) !== undefined || activeSptRail(intent) !== undefined),
+  );
 
   // One step is shown at a time. A step unlocks when the previous one has
   // produced what it needs: a registered card for 02, a usable allowance for 03.
@@ -409,7 +411,7 @@ export default function Page() {
             <StepHeader
               step="03"
               title="Reveal card details"
-              subtitle="Retrieve card details when your agent is ready to pay. Uses the network rail, or the encrypted-card fallback."
+              subtitle="Retrieve card details when your agent is ready to pay. Choose an active network, encrypted-card, or Stripe token rail."
             />
             <RevealCardDetails
               orderIntents={revealableOrderIntents}

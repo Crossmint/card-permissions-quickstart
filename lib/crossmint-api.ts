@@ -15,6 +15,7 @@ import {
   fetchRegistration as fetchRegistrationAction,
   registerCard as registerCardAction,
   removePaymentMethod as removePaymentMethodAction,
+  fetchSptCredentials as fetchSptCredentialsAction,
   type ActionResult,
   type AllData,
 } from "@/lib/crossmint-api.server";
@@ -29,6 +30,8 @@ import type {
   PaymentMethodResponse,
   RailProvider,
   RsaPublicJwk,
+  SptCredentialInput,
+  SptCredentialResponse,
 } from "@/lib/crossmint-types";
 
 export type { AllData };
@@ -80,3 +83,9 @@ export const fetchEncryptedCardCredentials = (
   orderIntentId: string,
   publicKey: RsaPublicJwk,
 ): Promise<EncryptedCardCredentialResponse> => unwrap(fetchEncryptedCardCredentialsAction(jwt, orderIntentId, publicKey));
+
+export const fetchSptCredentials = (
+  jwt: string,
+  orderIntentId: string,
+  input: SptCredentialInput,
+): Promise<SptCredentialResponse> => unwrap(fetchSptCredentialsAction(jwt, orderIntentId, input));

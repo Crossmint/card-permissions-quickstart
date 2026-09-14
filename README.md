@@ -23,17 +23,18 @@ Give agents permission to pay with a user's card through Crossmint's Agentic Pay
 - Register a card for agent payments and read which rails it supports
 - Create an allowance (order intent) with an amount, an expiry, and an optional merchant
 - Verify an allowance with the user's bank when the network rail asks for it
-- Retrieve card details through the Visa/Mastercard rail, or through the encrypted-card fallback for cards the networks do not support
+- Retrieve card details through the Visa/Mastercard rail, encrypted-card, or Stripe Shared Payment Token rail
 
-## How the fallback works
+## How rails work
 An order intent exposes one or more **rails**. Each rail is an independent way to spend the same allowance:
 
 | Rail | Cards | Verification | Credential |
 |------|-------|--------------|------------|
 | `agentic-token` | Visa (`vic`) and Mastercard (`agentpay`) | Bank verification on the first allowance | One-time card number, expires with `expiresAt` |
+| `spt` | Stripe merchants | Verification may be required | Stripe Shared Payment Token identifier |
 | `encrypted-card` | Any eligible saved card | None | The saved card as a JWE, decrypted in the browser |
 
-The app picks the first active rail that can mint a `card` credential. It prefers `agentic-token` and falls back to `encrypted-card`. See `lib/rails.ts` and `lib/card-credentials.ts`.
+The encrypted-card rail is always available on an active allowance. The app prefers `agentic-token` when active and lets you pick another active rail. The `spt` rail needs a Stripe Network Business Profile ID. See `lib/rails.ts` and `lib/card-credentials.ts`.
 
 For the encrypted-card rail the browser generates a one-time RSA-OAEP-256 keypair with WebCrypto, sends only the public JWK, and decrypts the returned JWE with `jose`. The private key and the card number never reach this app's server. See `lib/encrypted-card.ts`.
 
@@ -42,7 +43,7 @@ The app shows one step at a time. The column on the right lists the Crossmint AP
 
 Every call runs through `crossmintFetch()` in `lib/crossmint-api.server.ts`, which records an `ApiTrace` next to the data. `lib/crossmint-api.ts` unwraps it for the components and appends the traces to `lib/api-log.ts`. Secrets never enter the log: the JWT, the API key, card numbers, the JWE, and the public key are redacted on the server. See `lib/api-trace.ts` and `lib/api-explain.ts`.
 
-Rail names in the UI are the API's own: `agentic-token` with its `provider`, or `encrypted-card`.
+Rail names in the UI are the API's own: `agentic-token` with its `provider`, `spt` with Stripe, or `encrypted-card`.
 
 ## Deploy
 Easily deploy the template to Vercel with the button below. You will need to set the required environment variables in the Vercel dashboard.
@@ -113,4 +114,4 @@ To go to production:
 3. Add every origin the app runs on to the key's allowed origins in the console, for example `http://localhost:3000` and your deploy URL. Production rejects client-side keys from other origins. The server actions forward the browser `Origin` header for this check. See `lib/crossmint-api.ts`.
 4. Use a live Stytch project and add your production URL to its redirect URLs.
 5. Register your Stytch project in the Crossmint production console under "3P Auth providers".
-6. In production only real cards work. The staging test cards are rejected and the test card hint is hidden. Cards the networks do not support fall back to the `encrypted-card` rail.
+6. In production only real cards work. The staging test cards are rejected and the test card hint is hidden. The `encrypted-card` rail is always available on an active allowance.

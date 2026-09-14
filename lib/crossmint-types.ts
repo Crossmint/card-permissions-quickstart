@@ -22,23 +22,32 @@ export type Merchant = {
 //   - "agentpay": Mastercard Agent Pay
 export type RailProvider = "vic" | "agentpay";
 export type CredentialFormat = "card" | "network-token";
+export type SptCredentialFormat = "identifier";
+export type RailName = "agentic-token" | "encrypted-card" | "spt";
 
 // ─── Card registration ──────────────────────────────────────────────────────
 // One-time step per saved card. It provisions the agentic rails the card
-// supports. A card with only errored rails still works through the
-// encrypted-card fallback when an allowance is created.
+// supports, plus the Stripe Shared Payment Token rail when entitled. The
+// encrypted-card rail is always available on an active allowance.
 //   - "enabled": the rail can back a new order intent
 //   - "pending": provisioning has not finished, poll again
 //   - "error": provisioning failed, read error.code
 
 export type RegistrationRailStatus = "enabled" | "pending" | "error";
 
-export type RegistrationRail = {
-  rail: "agentic-token";
-  provider: RailProvider;
-  status: RegistrationRailStatus;
-  error?: { code: string } | null;
-};
+export type RegistrationRail =
+  | {
+      rail: "agentic-token";
+      provider: RailProvider;
+      status: RegistrationRailStatus;
+      error?: { code: string } | null;
+    }
+  | {
+      rail: "spt";
+      provider: "stripe";
+      status: RegistrationRailStatus;
+      error?: { code: string } | null;
+    };
 
 export type OrderIntentRegistration = {
   paymentMethodId: string;
@@ -49,10 +58,11 @@ export type OrderIntentRegistration = {
 // An order intent is a spending allowance on a saved card. It exposes one or
 // more rails, each an independent way to pay from the same allowance:
 //   - "agentic-token": Visa/Mastercard network rail, mints a one-time card number
-//   - "encrypted-card": universal fallback, returns the card as a JWE you decrypt
+//   - "encrypted-card": always available on an active allowance, returns the card as a JWE you decrypt
+//   - "spt": Stripe Shared Payment Token rail, returns a token identifier
 // Per-rail status:
 //   - "active": ready to mint credentials
-//   - "pending_verification": the user must verify with their bank (agentic-token only)
+//   - "pending_verification": the user must verify with their bank
 //   - "error": this rail cannot be used, read error.code
 
 export type OrderIntentStatus = "active" | "cancelled" | "expired";
@@ -64,7 +74,7 @@ type OrderIntentRailState =
   | { status: "error"; error: { code: string } };
 
 type OrderIntentRailBase = OrderIntentRailState & {
-  credentialFormats: CredentialFormat[];
+  credentialFormats: Array<CredentialFormat | SptCredentialFormat>;
 };
 
 export type AgenticTokenRail = OrderIntentRailBase & {
@@ -77,7 +87,13 @@ export type EncryptedCardRail = OrderIntentRailBase & {
   provider?: undefined;
 };
 
-export type OrderIntentRail = AgenticTokenRail | EncryptedCardRail;
+export type SptRail = OrderIntentRailState & {
+  rail: "spt";
+  provider: "stripe";
+  credentialFormats: SptCredentialFormat[];
+};
+
+export type OrderIntentRail = AgenticTokenRail | EncryptedCardRail | SptRail;
 
 export type OrderIntentVerificationConfig = {
   environment: "production" | "test";
@@ -135,19 +151,43 @@ export type AgenticTokenCredentialResponse = {
   expiresAt: string;
 };
 
+export type SptCredentialResponse = {
+  id: string;
+  rail: "spt";
+  provider: "stripe";
+  amount: { value: string; currency: string };
+  credential: { format: "identifier"; value: string };
+  expiresAt: string;
+};
+
+export type SptCredentialInput = {
+  amount: { value: string; currency: string };
+  merchant?: Merchant;
+  networkBusinessProfile: string;
+};
+
 export type EncryptedCardCredentialResponse = {
   rail: "encrypted-card";
   // Compact JWE (RSA-OAEP-256 + A256GCM). Decrypt with the matching private key.
   credential: { format: "card"; value: string };
 };
 
-// Normalized card details, whatever rail produced them. Never persist these.
-export type AgentCardCredentials = {
-  rail: "agentic-token" | "encrypted-card";
-  number: string;
-  expirationMonth: string;
-  expirationYear: string;
-  cvc: string;
-  // Only the agentic-token rail returns an expiry. The UI applies its own timer otherwise.
-  expiresAt?: string;
-};
+// Normalized credentials, whatever rail produced them. Never persist these.
+export type RevealedCredentials =
+  | {
+      kind: "card";
+      rail: Exclude<RailName, "spt">;
+      number: string;
+      expirationMonth: string;
+      expirationYear: string;
+      cvc: string;
+      expiresAt?: string;
+    }
+  | {
+      kind: "spt";
+      rail: "spt";
+      token: string;
+      expiresAt: string;
+    };
+
+export type AgentCardCredentials = Extract<RevealedCredentials, { kind: "card" }>;

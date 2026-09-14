@@ -4,13 +4,14 @@
 // Pure functions over redacted trace bodies. No I/O.
 
 import type { ApiTrace } from "@/lib/api-trace";
-import type { OrderIntentRegistration, OrderIntentResponse, RailProvider } from "@/lib/crossmint-types";
+import type { OrderIntentRegistration, OrderIntentResponse, RailName, RailProvider } from "@/lib/crossmint-types";
+import { activeCardRail, activeSptRail } from "@/lib/rails";
 
 export type Step = 1 | 2 | 3;
 
 export type RailFact = {
-  rail: "agentic-token" | "encrypted-card";
-  provider?: RailProvider;
+  rail: RailName;
+  provider?: RailProvider | "stripe";
   /** Registration or intent status, normalized to what the badge shows. */
   status: "enabled" | "active" | "pending" | "pending_verification" | "error";
   code?: string;
@@ -74,7 +75,7 @@ function errorMessage(trace: ApiTrace): string | undefined {
 
 function registrationRails(registration?: OrderIntentRegistration): RailFact[] {
   return (registration?.rails ?? []).map((rail) => ({
-    rail: "agentic-token",
+    rail: rail.rail,
     provider: rail.provider,
     status: rail.status,
     code: rail.error?.code,
@@ -83,11 +84,10 @@ function registrationRails(registration?: OrderIntentRegistration): RailFact[] {
 
 function intentRails(intent?: OrderIntentResponse): RailFact[] {
   const rails = intent?.rails ?? [];
-  const usable = rails.filter((rail) => rail.status === "active" && (rail.credentialFormats ?? []).includes("card"));
-  const preferred = usable.find((rail) => rail.rail === "agentic-token") ?? usable.find((rail) => rail.rail === "encrypted-card");
+  const preferred = intent ? activeCardRail(intent) ?? activeSptRail(intent) : undefined;
   return rails.map((rail) => ({
     rail: rail.rail,
-    provider: rail.rail === "agentic-token" ? rail.provider : undefined,
+    provider: rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : undefined,
     status: rail.status,
     code: rail.status === "error" ? rail.error?.code : undefined,
     preferred: rails.length > 1 && rail === preferred ? true : undefined,
@@ -98,10 +98,14 @@ function intentFacts(intent: OrderIntentResponse | undefined, rails: RailFact[])
   const facts: string[] = [];
   if (!intent) return facts;
   if (rails.some((rail) => rail.status === "pending_verification")) {
-    facts.push("agentic-token is pending_verification: the user verifies with their bank before the agent can use it.");
+    const pending = rails
+      .filter((rail) => rail.status === "pending_verification")
+      .map((rail) => rail.rail)
+      .join(", ");
+    facts.push(`${pending} is pending_verification: the user verifies with their bank before the agent can use it.`);
   }
   if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "active")) {
-    facts.push("encrypted-card is active with no verification. The saved card comes back encrypted to the browser.");
+    facts.push("encrypted-card is active with no verification. Always available on an active allowance.");
   }
   if (rails.length > 0 && rails.every((rail) => rail.status === "error")) {
     facts.push("No usable rail. This allowance cannot mint a card.");
@@ -133,16 +137,16 @@ function explainCall(trace: ApiTrace): Explained {
     if (trace.method === "PUT") {
       const facts: string[] = [];
       if (rails.length > 0 && rails.every((rail) => rail.status === "error")) {
-        facts.push("No agentic-token rail could be enabled. Allowances on this card get the encrypted-card rail.");
+        facts.push("No network rail could be enabled. Allowances on this card work through encrypted-card only.");
       } else if (rails.some((rail) => rail.status === "pending")) {
         facts.push("Enrollment is in progress. The app polls until it settles.");
       }
-      return { step, important: true, title: "Register the card for order intents. Crossmint enables its agentic-token rails.", facts, rails, error };
+      return { step, important: true, title: "Register the card for order intents. Crossmint enables its payment rails.", facts, rails, error };
     }
     return {
       step,
       important: false,
-      title: trace.status === 404 ? "Check registration: this card is not registered yet" : "Read which agent rails this card supports",
+      title: trace.status === 404 ? "Check registration: this card is not registered yet" : "Read which payment rails this card supports",
       facts: [],
       rails,
       error: trace.status === 404 ? undefined : error,
@@ -154,7 +158,7 @@ function explainCall(trace: ApiTrace): Explained {
 
   // ── Step 3: credentials ──
   if (trace.path.endsWith("/credentials")) {
-    const railName = req?.rail === "encrypted-card" ? "encrypted-card" : "agentic-token";
+    const railName: RailName = req?.rail === "encrypted-card" || req?.rail === "spt" ? req.rail : "agentic-token";
     const provider = req?.provider as RailProvider | undefined;
     if (railName === "encrypted-card") {
       const rails: RailFact[] = [{ rail: "encrypted-card", status: trace.ok ? "active" : "error" }];
@@ -163,6 +167,18 @@ function explainCall(trace: ApiTrace): Explained {
         important: true,
         title: "Fetch the saved card on the encrypted-card rail, encrypted to a one-time key from the browser",
         facts: trace.ok ? ["Credential issued by encrypted-card as a JWE. The browser decrypts it. The server never sees the number."] : [],
+        rails,
+        error,
+      };
+    }
+    if (railName === "spt") {
+      const rails: RailFact[] = [{ rail: "spt", provider: "stripe", status: trace.ok ? "active" : "error" }];
+      const expires = relativeExpiry((res as { expiresAt?: string })?.expiresAt);
+      return {
+        step,
+        important: true,
+        title: "Mint a Stripe shared payment token on the spt rail",
+        facts: trace.ok ? [`Credential issued by spt · stripe.${expires ? ` It expires in ${expires}.` : ""}`] : [],
         rails,
         error,
       };

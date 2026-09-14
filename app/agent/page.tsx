@@ -138,8 +138,7 @@ export default function AgentDemoPage() {
     return () => window.clearTimeout(timer);
   }, [credentials]);
 
-  // Pick the first allowance with a rail that can mint a card. The dispatcher
-  // prefers the network rail and falls back to encrypted-card.
+  // Pick the first allowance with a rail that can mint a card.
   const activeAllowance = orderIntents.find(isUsable);
   const activeRail = activeAllowance ? activeCardRail(activeAllowance) : undefined;
 
@@ -170,6 +169,7 @@ export default function AgentDemoPage() {
         // Used only when the allowance has no merchant of its own.
         merchant: { name: "Whole Foods", url: "https://www.wholefoodsmarket.com", countryCode: "US" },
       });
+      if (result.kind !== "card") throw new Error("The agent demo requires a card credential.");
       setCredentials(result);
       setStage("ready");
     } catch (error) {

@@ -1,9 +1,6 @@
 "use client";
 
-// Step 01: pick a saved card and see which rail it pays through.
-// One selector instead of a list. Below it, the selected card's rail badge:
-// `agentic-token` with its provider (`vic`, `agentpay`) when the registration
-// enabled it, `encrypted-card` when it did not. Registration happens here too.
+// Step 01: pick a saved card and see which rails it can use.
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronsUpDown, CreditCard, Info, Loader2, Plus } from "lucide-react";
@@ -48,11 +45,20 @@ function RailDetail({
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
           {enabled.map((rail) => (
-            <RailBadge key={rail.provider} rail="agentic-token" provider={rail.provider} status="enabled" />
+            <RailBadge
+              key={`${rail.rail}-${rail.provider}`}
+              rail={rail.rail}
+              provider={rail.rail === "agentic-token" ? rail.provider : "stripe"}
+              status="enabled"
+            />
           ))}
+          <RailBadge rail="encrypted-card" status="active" />
         </div>
         <p className="text-xs leading-5 text-[#00150d]/60">
-          One-time card numbers from the card network. Each allowance starts as pending_verification.
+          {enabled.some((rail) => rail.rail === "agentic-token") &&
+            "One-time card numbers from the card network after the user verifies with their bank."}
+          {enabled.some((rail) => rail.rail === "agentic-token") && enabled.some((rail) => rail.rail === "spt") && " "}
+          {enabled.some((rail) => rail.rail === "spt") && "Stripe Shared Payment Token for Stripe merchants."}
         </p>
       </div>
     );
@@ -89,7 +95,7 @@ function RailDetail({
         <RailBadge rail="encrypted-card" status="active" code={code} />
       </div>
       <p className="text-xs leading-5 text-[#00150d]/60">
-        The saved card as a JWE, decrypted in your browser. Active with no verification.
+        Always available: the saved card as a JWE, decrypted in your browser. No verification.
       </p>
     </div>
   );
@@ -98,12 +104,29 @@ function RailDetail({
 /** Badge shown next to each card in the dropdown. */
 function CardRailTag({ registration }: { registration: OrderIntentRegistration | null }) {
   if (!registration) return <span className="text-[11px] text-[#00150d]/40">Not registered</span>;
-  const enabled = registration.rails.find((rail) => rail.status === "enabled");
-  if (enabled) return <RailBadge rail="agentic-token" provider={enabled.provider} compact />;
   if (registration.rails.some((rail) => rail.status === "pending")) {
-    return <span className="text-[11px] font-mono text-[#9A6700]">pending</span>;
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-[11px] font-mono text-[#9A6700]">pending</span>
+        <RailBadge rail="encrypted-card" compact />
+      </div>
+    );
   }
-  return <RailBadge rail="encrypted-card" compact />;
+  return (
+    <div className="flex flex-wrap justify-end gap-1">
+      {registration.rails
+        .filter((rail) => rail.status === "enabled")
+        .map((rail) => (
+          <RailBadge
+            key={`${rail.rail}-${rail.provider}`}
+            rail={rail.rail}
+            provider={rail.rail === "agentic-token" ? rail.provider : "stripe"}
+            compact
+          />
+        ))}
+      <RailBadge rail="encrypted-card" compact />
+    </div>
+  );
 }
 
 export function SavedCardsList({
@@ -186,7 +209,7 @@ export function SavedCardsList({
   };
 
   // Registration is a one-time step per card with no user ceremony. It tells
-  // Crossmint to provision the card's agentic rails. Bank verification happens
+  // Crossmint to provision the card's payment rails. Bank verification happens
   // later, per allowance.
   const handleRegister = async () => {
     setRegistering(true);

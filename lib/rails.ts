@@ -9,28 +9,46 @@ export function clampDelay(ms: number): number {
 }
 
 import type { OrderIntentVerificationProps } from "@crossmint/client-sdk-react-ui";
-import type { AgenticTokenRail, OrderIntentRail, OrderIntentRegistration, OrderIntentResponse } from "@/lib/crossmint-types";
+import type {
+  AgenticTokenRail,
+  EncryptedCardRail,
+  OrderIntentRail,
+  OrderIntentRegistration,
+  OrderIntentResponse,
+  SptRail,
+} from "@/lib/crossmint-types";
 
 /**
- * True when the card networks have finished with this card: every rail is
- * enabled or in error, none is still pending. Only a settled registration
- * can back an allowance, whichever rail the API then assigns.
+ * True when card registration has finished: every rail is enabled or in error,
+ * none is still pending.
  */
 export function isRegistrationSettled(registration: OrderIntentRegistration | null | undefined): boolean {
   if (!registration) return false;
   return registration.rails.length > 0 && !registration.rails.some((rail) => rail.status === "pending");
 }
 
-/**
- * The active rail that can mint a card credential, if any.
- * Prefer the agentic-token rail (one-time card number).
- * Fall back to encrypted-card (works for any eligible card).
- */
-export function activeCardRail(intent: OrderIntentResponse): OrderIntentRail | undefined {
+/** Active card-minting rails, preferring agentic-token over encrypted-card. */
+export function activeCardRails(intent: OrderIntentResponse): (AgenticTokenRail | EncryptedCardRail)[] {
   const rails = (intent.rails ?? []).filter(
-    (rail) => rail.status === "active" && (rail.credentialFormats ?? []).includes("card"),
+    (rail): rail is AgenticTokenRail | EncryptedCardRail =>
+      (rail.rail === "agentic-token" || rail.rail === "encrypted-card") &&
+      rail.status === "active" &&
+      rail.credentialFormats.includes("card"),
   );
-  return rails.find((rail) => rail.rail === "agentic-token") ?? rails.find((rail) => rail.rail === "encrypted-card");
+  return rails.sort((a, b) => Number(b.rail === "agentic-token") - Number(a.rail === "agentic-token"));
+}
+
+/** Preferred active card-minting rail, if any. */
+export function activeCardRail(intent: OrderIntentResponse): AgenticTokenRail | EncryptedCardRail | undefined {
+  return activeCardRails(intent)[0];
+}
+
+/** Active Stripe Shared Payment Token rail, if it supports identifiers. */
+export function activeSptRail(intent: OrderIntentResponse): SptRail | undefined {
+  return (intent.rails ?? []).find(
+    (rail): rail is SptRail =>
+      rail.rail === "spt" && rail.status === "active" && rail.credentialFormats.includes("identifier"),
+  );
 }
 
 /** The agentic-token rail that still needs the user's bank verification, if any. */
@@ -40,14 +58,26 @@ export function pendingAgenticRail(intent: OrderIntentResponse): AgenticTokenRai
   );
 }
 
-/** True when the intent has a rail pending verification and the config to run it. */
-export function needsVerification(intent: OrderIntentResponse): boolean {
-  return pendingAgenticRail(intent) !== undefined && intent.verificationConfig !== undefined;
+/** Rails that still need verification, if any. */
+export function pendingVerificationRails(intent: OrderIntentResponse): (AgenticTokenRail | SptRail)[] {
+  return (intent.rails ?? []).filter(
+    (rail): rail is AgenticTokenRail | SptRail =>
+      (rail.rail === "agentic-token" || rail.rail === "spt") && rail.status === "pending_verification",
+  );
 }
 
-/** True when the intent is active and at least one rail can mint a card. */
+/** True when a network or Stripe token rail needs verification and config exists. */
+export function needsVerification(intent: OrderIntentResponse): boolean {
+  return pendingVerificationRails(intent).length > 0 && intent.verificationConfig !== undefined;
+}
+
+/** True when the intent is active and can mint a card or shared payment token. */
 export function isUsable(intent: OrderIntentResponse): boolean {
-  return intent.status === "active" && activeCardRail(intent) !== undefined && availableAmount(intent) > 0;
+  return (
+    intent.status === "active" &&
+    (activeCardRails(intent).length > 0 || activeSptRail(intent) !== undefined) &&
+    availableAmount(intent) > 0
+  );
 }
 
 /** Remaining balance as a number. 0 when missing or malformed. */
@@ -64,12 +94,14 @@ export function railErrorCode(intent: OrderIntentResponse): string | undefined {
 /** Rail name as the API returns it, with the provider code when present. */
 export function railLabel(rail: OrderIntentRail): string {
   if (rail.rail === "encrypted-card") return "encrypted-card";
+  if (rail.rail === "spt") return "spt · stripe";
   return `agentic-token · ${rail.provider}`;
 }
 
 /**
  * Narrow an order intent to the shape `OrderIntentVerification` accepts:
- * a present verificationConfig and agentic-token rails only.
+ * a present verificationConfig and agentic-token rails only. The SDK
+ * verification props do not accept the spt rail in this version.
  * Returns null when there is nothing to verify.
  */
 export function toVerifiableOrderIntent(intent: OrderIntentResponse): OrderIntentVerificationProps["orderIntent"] | null {
@@ -77,6 +109,13 @@ export function toVerifiableOrderIntent(intent: OrderIntentResponse): OrderInten
   return {
     ...intent,
     verificationConfig: intent.verificationConfig,
-    rails: intent.rails.filter((rail): rail is AgenticTokenRail => rail.rail === "agentic-token"),
+    rails: intent.rails
+      .filter((rail): rail is AgenticTokenRail => rail.rail === "agentic-token")
+      .map((rail) => ({
+        ...rail,
+        credentialFormats: rail.credentialFormats.filter(
+          (format): format is "card" | "network-token" => format !== "identifier",
+        ),
+      })),
   };
 }

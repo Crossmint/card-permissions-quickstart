@@ -26,6 +26,8 @@ import type {
   PaymentMethodResponse,
   RailProvider,
   RsaPublicJwk,
+  SptCredentialInput,
+  SptCredentialResponse,
 } from "@/lib/crossmint-types";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { headers } from "next/headers";
@@ -275,9 +277,9 @@ export async function fetchOrderIntent(jwt: string, orderIntentId: string): Prom
 
 /**
  * Create an order intent (allowance) on a registered card.
- * The response lists the rails that can spend it. An agentic-token rail may
- * come back as pending_verification: the user then verifies with their bank.
- * An unsupported card gets an encrypted-card rail instead, already active.
+ * The response lists the rails that can spend it. Network rails may come back
+ * as pending_verification: the user then verifies with their bank. The
+ * encrypted-card rail is always listed when entitled.
  */
 export async function createNewOrderIntent(
   jwt: string,
@@ -366,7 +368,7 @@ export async function fetchAgenticTokenCredentials(
 }
 
 /**
- * Fetch the saved card as a JWE on the encrypted-card fallback rail.
+ * Fetch the saved card as a JWE on the encrypted-card rail.
  * Send only the RSA public JWK. The caller decrypts the result in the browser.
  */
 export async function fetchEncryptedCardCredentials(
@@ -379,5 +381,31 @@ export async function fetchEncryptedCardCredentials(
     const out = await crossmintFetch("POST", `/order-intents/${orderIntentId}/credentials`, jwt, body);
     if (!out.ok) throw apiError("Failed to fetch encrypted card credentials", out);
     return out.body as EncryptedCardCredentialResponse;
+  });
+}
+
+/**
+ * Mint a Stripe Shared Payment Token identifier on the spt rail.
+ * `amount` is the exact charge. Pass `merchant` only when the intent has none.
+ */
+export async function fetchSptCredentials(
+  jwt: string,
+  orderIntentId: string,
+  input: SptCredentialInput,
+): Promise<ActionResult<SptCredentialResponse>> {
+  return traced(async () => {
+    const body = {
+      rail: "spt" as const,
+      provider: "stripe" as const,
+      amount: input.amount,
+      ...(input.merchant ? { merchant: input.merchant } : {}),
+      credential: {
+        format: "identifier" as const,
+        payload: { networkBusinessProfile: input.networkBusinessProfile },
+      },
+    };
+    const out = await crossmintFetch("POST", `/order-intents/${orderIntentId}/credentials`, jwt, body);
+    if (!out.ok) throw apiError("Failed to fetch shared payment token credentials", out);
+    return out.body as SptCredentialResponse;
   });
 }
