@@ -99,23 +99,10 @@ export function railLabel(rail: OrderIntentRail): string {
 }
 
 /**
- * Narrow an order intent to the shape `OrderIntentVerification` accepts:
- * a present verificationConfig and agentic-token rails only. The SDK
- * verification props do not accept the spt rail in this version.
- * Returns null when there is nothing to verify.
+ * Narrow an order intent to the verification-required shape.
+ * Returns null when there is nothing pending.
  */
 export function toVerifiableOrderIntent(intent: OrderIntentResponse): OrderIntentVerificationProps["orderIntent"] | null {
   if (!intent.verificationConfig || !pendingAgenticRail(intent)) return null;
-  return {
-    ...intent,
-    verificationConfig: intent.verificationConfig,
-    rails: intent.rails
-      .filter((rail): rail is AgenticTokenRail => rail.rail === "agentic-token")
-      .map((rail) => ({
-        ...rail,
-        credentialFormats: rail.credentialFormats.filter(
-          (format): format is "card" | "network-token" => format !== "identifier",
-        ),
-      })),
-  };
+  return { ...intent, verificationConfig: intent.verificationConfig };
 }

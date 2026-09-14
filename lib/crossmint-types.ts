@@ -73,18 +73,17 @@ type OrderIntentRailState =
   | { status: "active" | "pending_verification"; error?: never }
   | { status: "error"; error: { code: string } };
 
-type OrderIntentRailBase = OrderIntentRailState & {
-  credentialFormats: Array<CredentialFormat | SptCredentialFormat>;
-};
-
-export type AgenticTokenRail = OrderIntentRailBase & {
+export type AgenticTokenRail = OrderIntentRailState & {
   rail: "agentic-token";
   provider: RailProvider;
+  credentialFormats: CredentialFormat[];
 };
 
-export type EncryptedCardRail = OrderIntentRailBase & {
+export type EncryptedCardRail = {
   rail: "encrypted-card";
-  provider?: undefined;
+  status: "active";
+  error?: never;
+  credentialFormats: "card"[];
 };
 
 export type SptRail = OrderIntentRailState & {

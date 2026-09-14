@@ -54,7 +54,7 @@ function StatusPill({ orderIntent }: { orderIntent: OrderIntentResponse }) {
       <div className="flex flex-wrap justify-end gap-1.5">
         {rails.map((rail) => (
           <RailBadge
-            key={`${rail.rail}-${rail.provider ?? "default"}`}
+            key={`${rail.rail}-${rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : "default"}`}
             rail={rail.rail}
             provider={rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : undefined}
             status={rail.status}
