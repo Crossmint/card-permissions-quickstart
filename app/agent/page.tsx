@@ -16,8 +16,11 @@ import {
   ShoppingBag,
   Sparkles,
 } from "lucide-react";
-import { fetchAllData, fetchCardCredentials } from "@/lib/crossmint-api";
-import type { AgentResponse, CardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
+import { fetchAllData } from "@/lib/crossmint-api";
+import type { AgentCardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
+import { revealCardCredentials } from "@/lib/card-credentials";
+import { activeCardRail, availableAmount, clampDelay, isUsable, railLabel } from "@/lib/rails";
+import { CROSSMINT_ENVIRONMENT } from "@/lib/crossmint-env";
 
 type AgentStage = "idle" | "planning" | "checking" | "securing" | "ready" | "error";
 
@@ -34,6 +37,10 @@ const MOCK_CART = [
 ];
 
 const MOCK_TOTAL = "$42.18";
+const MOCK_TOTAL_VALUE = "42.18";
+
+// The encrypted-card rail returns no expiry. Hide those details after a fixed time.
+const FALLBACK_HIDE_MS = 5 * 60 * 1000;
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -44,16 +51,11 @@ function formatCardNumber(number: string) {
 }
 
 function allowanceName(orderIntent: OrderIntentResponse) {
-  const description = orderIntent.mandates.find((mandate) => mandate.type === "description");
-  return description?.value ?? "Agent card allowance";
+  return orderIntent.description || "Agent card allowance";
 }
 
 function allowanceLimit(orderIntent: OrderIntentResponse) {
-  const maxAmount = orderIntent.mandates.find((mandate) => mandate.type === "maxAmount");
-  if (maxAmount?.type !== "maxAmount") {
-    return "Active allowance";
-  }
-  return `${maxAmount.value} ${maxAmount.details.currency.toUpperCase()}`;
+  return `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()} available`;
 }
 
 function ActivityItem({
@@ -91,12 +93,11 @@ export default function AgentDemoPage() {
   const stytch = useStytch();
   const { user, isInitialized } = useStytchUser();
   const router = useRouter();
-  const [agent, setAgent] = useState<AgentResponse | null>(null);
   const [orderIntents, setOrderIntents] = useState<OrderIntentResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [stage, setStage] = useState<AgentStage>("idle");
-  const [credentials, setCredentials] = useState<CardCredentials | null>(null);
+  const [credentials, setCredentials] = useState<AgentCardCredentials | null>(null);
   const [runError, setRunError] = useState("");
 
   const getJwt = useCallback(() => stytch.session.getTokens()?.session_jwt ?? "", [stytch]);
@@ -113,8 +114,6 @@ export default function AgentDemoPage() {
     const load = async () => {
       try {
         const data = await fetchAllData(getJwt());
-        const currentAgent = data.agents[0] ?? null;
-        setAgent(currentAgent);
         setOrderIntents(data.orderIntents);
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : "Failed to load agent context");
@@ -130,20 +129,18 @@ export default function AgentDemoPage() {
     if (!credentials) {
       return;
     }
-    const expiresInMs = new Date(credentials.expiresAt).getTime() - Date.now();
-    if (!Number.isFinite(expiresInMs)) {
-      return;
-    }
+    const expiresAt = credentials.expiresAt ? new Date(credentials.expiresAt).getTime() : NaN;
+    const expiresInMs = Number.isFinite(expiresAt) ? expiresAt - Date.now() : FALLBACK_HIDE_MS;
     const timer = window.setTimeout(() => {
       setCredentials(null);
       setStage("idle");
-    }, Math.max(0, expiresInMs));
+    }, clampDelay(expiresInMs));
     return () => window.clearTimeout(timer);
   }, [credentials]);
 
-  const activeAllowance = agent
-    ? orderIntents.find((orderIntent) => orderIntent.agentId === agent.agentId && orderIntent.phase === "active")
-    : undefined;
+  // Pick the first allowance with a rail that can mint a card.
+  const activeAllowance = orderIntents.find(isUsable);
+  const activeRail = activeAllowance ? activeCardRail(activeAllowance) : undefined;
 
   const runAgent = async () => {
     if (!activeAllowance || stage === "planning" || stage === "checking" || stage === "securing") {
@@ -159,11 +156,20 @@ export default function AgentDemoPage() {
     setStage("securing");
 
     try {
-      const result = await fetchCardCredentials(getJwt(), activeAllowance.orderIntentId, {
-        name: "Whole Foods",
-        url: "https://www.wholefoodsmarket.com",
-        countryCode: "US",
+      // The card is minted for the exact cart total. A cart above the remaining
+      // balance is a spending-rule failure, not a smaller charge.
+      const available = availableAmount(activeAllowance);
+      if (Number(MOCK_TOTAL_VALUE) > available) {
+        throw new Error(
+          `The ${MOCK_TOTAL} cart exceeds the ${available.toFixed(2)} ${activeAllowance.amount.currency.toUpperCase()} left on this allowance.`,
+        );
+      }
+      const result = await revealCardCredentials(getJwt(), activeAllowance, {
+        amount: Number(MOCK_TOTAL_VALUE).toFixed(2),
+        // Used only when the allowance has no merchant of its own.
+        merchant: { name: "Whole Foods", url: "https://www.wholefoodsmarket.com", countryCode: "US" },
       });
+      if (result.kind !== "card") throw new Error("The agent demo requires a card credential.");
       setCredentials(result);
       setStage("ready");
     } catch (error) {
@@ -297,22 +303,22 @@ export default function AgentDemoPage() {
                       <LockKeyhole className="size-4 text-[#05B959]" />
                     </div>
                     <div className="relative font-mono text-lg tracking-[0.11em] mb-5">
-                      {formatCardNumber(credentials.card.number)}
+                      {formatCardNumber(credentials.number)}
                     </div>
                     <div className="relative flex gap-8 font-mono text-xs">
                       <div>
                         <div className="text-[9px] uppercase tracking-wider text-white/40 mb-1">Expires</div>
-                        {String(credentials.card.expirationMonth).padStart(2, "0")}/{String(credentials.card.expirationYear).slice(-2)}
+                        {credentials.expirationMonth.padStart(2, "0")}/{credentials.expirationYear.slice(-2)}
                       </div>
                       <div>
                         <div className="text-[9px] uppercase tracking-wider text-white/40 mb-1">CVC</div>
-                        {credentials.card.cvc}
+                        {credentials.cvc}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-[#00150d]/45 pl-1">
                     <ShieldCheck className="size-3.5 text-[#05B959]" />
-                    No purchase was made. Credentials expire automatically.
+                    No purchase was made. {credentials.rail === "encrypted-card" ? "Card decrypted in this tab with a one-time key." : "Credentials expire automatically."}
                   </div>
                 </div>
               </div>
@@ -381,11 +387,11 @@ export default function AgentDemoPage() {
             </div>
             {loadError ? (
               <p className="text-xs text-red-600">{loadError}</p>
-            ) : activeAllowance && agent ? (
+            ) : activeAllowance && activeRail ? (
               <div className="space-y-3 text-xs">
                 <div>
-                  <div className="text-[#00150d]/40 mb-1">Agent</div>
-                  <div className="font-medium truncate">{agent.metadata.name}</div>
+                  <div className="text-[#00150d]/40 mb-1">Payment rail</div>
+                  <div className="font-medium truncate">{railLabel(activeRail)}</div>
                 </div>
                 <div className="h-px bg-black/[0.06]" />
                 <div>
@@ -410,7 +416,7 @@ export default function AgentDemoPage() {
           </div>
 
           <p className="px-1 text-[11px] leading-4 text-[#00150d]/35">
-            The conversation and checkout are simulated. Card credentials are retrieved from the staging API.
+            The conversation and checkout are simulated. Card credentials are retrieved from the Crossmint {CROSSMINT_ENVIRONMENT} API.
           </p>
         </aside>
       </div>

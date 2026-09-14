@@ -1,48 +1,172 @@
 "use client";
 
-import { useState } from "react";
-import { CreditCard, Loader2, Info, Plus, Check } from "lucide-react";
+// Step 01: pick a saved card and see which rails it can use.
+
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronsUpDown, CreditCard, Info, Loader2, Plus } from "lucide-react";
 import { DotsMenu } from "./dots-menu";
-import type { PaymentMethodResponse, AgenticEnrollmentResponse } from "@/lib/crossmint-types";
-import { ensureEnrollment } from "@/lib/crossmint-api";
-import { waitForActiveEnrollment } from "@/lib/wait-for-active-enrollment";
-import { EnrollmentVerificationStep } from "./enrollment-verification-step";
+import { RailBadge } from "./rail-badge";
+import type { OrderIntentRegistration, PaymentMethodResponse } from "@/lib/crossmint-types";
+import { registerCard } from "@/lib/crossmint-api";
+import { RegistrationPendingError, waitForRegistration } from "@/lib/wait-for-registration";
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function cardTitle(card: PaymentMethodResponse) {
+  const brand = card.card?.brand ? capitalize(card.card.brand) : "Card";
+  return `${brand} •••• ${card.card?.last4 ?? "????"}`;
+}
+
+function cardExpiry(card: PaymentMethodResponse) {
+  const month = card.card?.expiration?.month ?? "";
+  const year = card.card?.expiration?.year ?? "";
+  return month && year ? `Exp. ${month}/${year.slice(-2)}` : null;
+}
+
+/** The rail a registered card pays through, with a one-line description. */
+function RailDetail({
+  registration,
+  checking,
+  checkMessage,
+  onCheckAgain,
+}: {
+  registration: OrderIntentRegistration;
+  checking: boolean;
+  checkMessage: string;
+  onCheckAgain: () => void;
+}) {
+  const enabled = registration.rails.filter((rail) => rail.status === "enabled");
+  const pending = registration.rails.some((rail) => rail.status === "pending");
+
+  if (enabled.length > 0) {
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-2">
+          {enabled.map((rail) => (
+            <RailBadge
+              key={`${rail.rail}-${rail.provider}`}
+              rail={rail.rail}
+              provider={rail.rail === "agentic-token" ? rail.provider : "stripe"}
+              status="enabled"
+            />
+          ))}
+          <RailBadge rail="encrypted-card" status="active" />
+        </div>
+        <p className="text-xs leading-5 text-[#00150d]/60">
+          {enabled.some((rail) => rail.rail === "agentic-token") &&
+            "One-time card numbers from the card network after the user verifies with their bank."}
+          {enabled.some((rail) => rail.rail === "agentic-token") && enabled.some((rail) => rail.rail === "spt") && " "}
+          {enabled.some((rail) => rail.rail === "spt") && "Stripe Shared Payment Token for Stripe merchants."}
+        </p>
+      </div>
+    );
+  }
+
+  if (pending) {
+    // Nothing polls in the background. The user asks for a re-check.
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-md border border-[#E6C87A] bg-[#FFF8E1] pl-3 pr-2 py-2">
+        <div className="flex items-center gap-2 text-xs text-[#9A6700]">
+          {checking && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+          <span>
+            {checking
+              ? "GET /payment-methods/{id}/order-intent-registration…"
+              : checkMessage || "Rail status is pending. The card networks have not finished enrolling this card. Step 02 stays locked until they do."}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onCheckAgain}
+          disabled={checking}
+          className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          Check again
+        </button>
+      </div>
+    );
+  }
+
+  const code = registration.rails.find((rail) => rail.status === "error")?.error?.code;
+  return (
+    <div className="space-y-2">
+      <div>
+        <RailBadge rail="encrypted-card" status="active" code={code} />
+      </div>
+      <p className="text-xs leading-5 text-[#00150d]/60">
+        Always available: the saved card as a JWE, decrypted in your browser. No verification.
+      </p>
+    </div>
+  );
+}
+
+/** Badge shown next to each card in the dropdown. */
+function CardRailTag({ registration }: { registration: OrderIntentRegistration | null }) {
+  if (!registration) return <span className="text-[11px] text-[#00150d]/40">Not registered</span>;
+  if (registration.rails.some((rail) => rail.status === "pending")) {
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-[11px] font-mono text-[#9A6700]">pending</span>
+        <RailBadge rail="encrypted-card" compact />
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap justify-end gap-1">
+      {registration.rails
+        .filter((rail) => rail.status === "enabled")
+        .map((rail) => (
+          <RailBadge
+            key={`${rail.rail}-${rail.provider}`}
+            rail={rail.rail}
+            provider={rail.rail === "agentic-token" ? rail.provider : "stripe"}
+            compact
+          />
+        ))}
+      <RailBadge rail="encrypted-card" compact />
+    </div>
+  );
+}
+
 export function SavedCardsList({
   cards,
   loading,
-  canIssue,
   getJwt,
   email,
-  enrollmentStatuses,
-  onIssueCardPermission,
+  registrations,
+  selectedCardId,
+  onSelectCard,
   onDeleteCard,
   onAddCard,
-  onEnrollmentComplete,
-  viewMode = "ui",
+  onRegistrationComplete,
 }: {
   cards: PaymentMethodResponse[];
   loading: boolean;
-  canIssue: boolean;
   getJwt: () => string;
   email: string;
-  enrollmentStatuses: Record<string, string>;
-  onIssueCardPermission: (paymentMethodId: string) => void;
+  registrations: Record<string, OrderIntentRegistration | null>;
+  selectedCardId: string | null;
+  onSelectCard: (paymentMethodId: string) => void;
   onDeleteCard: (paymentMethodId: string) => Promise<void>;
   onAddCard?: () => void;
-  onEnrollmentComplete?: () => void | Promise<void>;
-  viewMode?: "ui" | "code";
+  onRegistrationComplete?: () => void | Promise<void>;
 }) {
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [enrollingId, setEnrollingId] = useState<string | null>(null);
-  const [verifyingId, setVerifyingId] = useState<string | null>(null);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [pendingEnrollment, setPendingEnrollment] = useState<AgenticEnrollmentResponse | null>(null);
-  const [verifyError, setVerifyError] = useState<Record<string, string>>({});
+  const [open, setOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [checkMessage, setCheckMessage] = useState("");
+  const selectorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (event: MouseEvent) => {
+      if (selectorRef.current && !selectorRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   if (loading) {
     return (
@@ -70,164 +194,156 @@ export function SavedCardsList({
     );
   }
 
-  const handleDelete = async (paymentMethodId: string) => {
-    setDeletingId(paymentMethodId);
+  const selected = cards.find((card) => card.paymentMethodId === selectedCardId) ?? cards[0];
+  const pmId = selected.paymentMethodId;
+  const registration = registrations[pmId] ?? null;
+  const expiry = cardExpiry(selected);
+
+  const handleDelete = async () => {
+    setDeleting(true);
     try {
-      await onDeleteCard(paymentMethodId);
+      await onDeleteCard(pmId);
     } finally {
-      setDeletingId(null);
+      setDeleting(false);
     }
   };
 
-  const finishEnrollment = async (pmId: string) => {
-    setConfirmingId(pmId);
-    setVerifyError((prev) => {
-      const next = { ...prev };
-      delete next[pmId];
-      return next;
-    });
+  // Registration is a one-time step per card with no user ceremony. It tells
+  // Crossmint to provision the card's payment rails. Bank verification happens
+  // later, per allowance.
+  const handleRegister = async () => {
+    setRegistering(true);
+    setRegisterError("");
     try {
-      await waitForActiveEnrollment(getJwt(), pmId);
-      setVerifyingId(null);
-      setPendingEnrollment(null);
-      await onEnrollmentComplete?.();
+      const jwt = getJwt();
+      const initial = await registerCard(jwt, pmId, email);
+      await waitForRegistration(jwt, pmId, initial);
     } catch (err) {
-      console.error("Verification did not become active:", err);
-      setVerifyError((prev) => ({
-        ...prev,
-        [pmId]: err instanceof Error ? err.message : "Verification did not finish. Please try again.",
-      }));
-      setVerifyingId(null);
-      setPendingEnrollment(null);
-    } finally {
-      setConfirmingId(null);
-    }
-  };
-
-  const handleEnroll = async (pmId: string) => {
-    setEnrollingId(pmId);
-    setVerifyError((prev) => {
-      const next = { ...prev };
-      delete next[pmId];
-      return next;
-    });
-    try {
-      const res = await ensureEnrollment(getJwt(), pmId, email);
-      if (res.status === "active") {
-        await onEnrollmentComplete?.();
-      } else if (res.status === "pending") {
-        setPendingEnrollment(res);
-        setVerifyingId(pmId);
+      if (!(err instanceof RegistrationPendingError)) {
+        console.error("Registration failed:", err);
+        setRegisterError(err instanceof Error ? err.message : "Registration failed. Please try again.");
+        setRegistering(false);
+        return;
       }
+      // Registered, rails still pending: the pending state below takes over.
+    }
+    await onRegistrationComplete?.();
+    setRegistering(false);
+  };
+
+  // Re-poll a pending registration on demand. Does not repeat the PUT.
+  const handleCheckAgain = async () => {
+    if (!registration) return;
+    setChecking(true);
+    setCheckMessage("");
+    try {
+      await waitForRegistration(getJwt(), pmId, registration);
+      await onRegistrationComplete?.();
     } catch (err) {
-      console.error("Verification failed:", err);
+      setCheckMessage(
+        err instanceof RegistrationPendingError
+          ? "Still pending. Give the card networks a moment and check again."
+          : err instanceof Error
+            ? err.message
+            : "Could not read the registration.",
+      );
+      if (err instanceof RegistrationPendingError) await onRegistrationComplete?.();
     } finally {
-      setEnrollingId(null);
+      setChecking(false);
     }
   };
 
   return (
-    <div className="space-y-[14px]">
-      {viewMode === "code" ? (
-        <pre className="rounded-lg bg-black/[0.02] p-3 text-xs font-mono text-[#00150d] overflow-auto max-h-96">
-          {JSON.stringify(cards, null, 2)}
-        </pre>
-      ) : (
-        <>
-        {cards.map((card) => {
-          const pmId = card.paymentMethodId;
-          const isEnrolled = enrollmentStatuses[pmId] === "active";
-          const isEnrolling = enrollingId === pmId;
-          const isVerifying = verifyingId === pmId;
-          const isConfirming = confirmingId === pmId;
-          const brand = card.card?.brand ? capitalize(card.card.brand) : "Card";
-          const last4 = card.card?.last4 ?? "????";
-          const expMonth = card.card?.expiration?.month ?? "";
-          const expYear = card.card?.expiration?.year ?? "";
-          const expDisplay = expMonth && expYear ? `Exp. date ${expMonth}/${expYear.slice(-2)}` : null;
+    <div className="space-y-3">
+      {/* Card selector + delete */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 min-w-0" ref={selectorRef}>
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            className="w-full flex items-center gap-3 rounded-lg bg-[#F6F6F6] px-4 py-3 text-left hover:bg-[#efefef] transition-colors"
+          >
+            <CreditCard className="size-5 text-[#05B959] shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-[#00150d]">{cardTitle(selected)}</div>
+              {expiry && <div className="text-xs text-[#00150d]/50">{expiry}</div>}
+            </div>
+            {cards.length > 1 && <span className="text-[11px] text-[#00150d]/40">{cards.length} cards</span>}
+            <ChevronsUpDown className="size-4 text-[#00150d] shrink-0" />
+          </button>
 
-          return (
-            <div key={pmId} className="flex flex-col gap-[20px]">
-              <div className="flex items-center justify-between rounded-lg bg-[#F6F6F6] px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <CreditCard className="size-5 text-[#05B959] shrink-0" />
-                  <div>
-                    <div className="text-sm font-medium text-[#00150d]">
-                      {brand} •••• {last4}
-                    </div>
-                    {expDisplay && (
-                      <div className="text-xs text-[#00150d]/50">{expDisplay}</div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isEnrolled && (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-[#00150d]/40 border border-[rgba(0,0,0,0.15)] px-2.5 py-1 rounded-[6px]">
-                      <Check className="size-3 shrink-0" />
-                      Verified
-                    </span>
-                  )}
-                  {deletingId === pmId
-                    ? <Loader2 className="size-3.5 animate-spin text-[#00150d]/40" />
-                    : <DotsMenu onDelete={() => handleDelete(pmId)} deleteLabel="Delete card" />
-                  }
-                </div>
-              </div>
-
-              {!isEnrolled && (
-                <div
-                  className={`flex items-center justify-between gap-3 pl-3 pr-2 py-2 rounded-md border ${
-                    verifyError[pmId]
-                      ? "bg-[#FDF2F2] border-[#F4C7C7]"
-                      : "bg-[#F5FCF8] border-[#DDF5E8]"
-                  }`}
-                >
-                  <div className={`flex items-center gap-2 text-xs ${verifyError[pmId] ? "text-[#B42318]" : "text-[#03A14D]"}`}>
-                    <Info className={`size-3.5 shrink-0 ${verifyError[pmId] ? "text-[#B42318]" : "text-[#03A14D]"}`} />
-                    <span>
-                      {isConfirming
-                        ? "Confirming verification with Crossmint..."
-                        : verifyError[pmId]
-                          ? verifyError[pmId]
-                          : "This card needs to be verified for agentic use before allowing payments."}
-                    </span>
-                  </div>
+          {open && (
+            <div role="listbox" className="absolute left-0 right-0 top-full mt-1 bg-white rounded-[8px] border border-[rgba(0,0,0,0.1)] shadow-md py-1 z-50">
+              {cards.map((card) => {
+                const isSelected = card.paymentMethodId === pmId;
+                const exp = cardExpiry(card);
+                return (
                   <button
-                    onClick={() => handleEnroll(pmId)}
-                    disabled={isEnrolling || isVerifying || isConfirming}
-                    className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                    key={card.paymentMethodId}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => { onSelectCard(card.paymentMethodId); setOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#F6F6F6] transition-colors text-left"
                   >
-                    {(isEnrolling || isConfirming) && <Loader2 className="size-3.5 animate-spin" />}
-                    <span>{isConfirming ? "Confirming" : "Verify card"}</span>
+                    <CreditCard className="size-4 text-[#05B959] shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-[#00150d]">{cardTitle(card)}</div>
+                      {exp && <div className="text-xs text-[#00150d]/50">{exp}</div>}
+                    </div>
+                    <CardRailTag registration={registrations[card.paymentMethodId] ?? null} />
+                    <span className="w-4 shrink-0">{isSelected && <Check className="size-4 text-[#05B959]" />}</span>
                   </button>
-                </div>
-              )}
-
-              {isVerifying && pendingEnrollment?.status === "pending" && (
-                <EnrollmentVerificationStep
-                  enrollment={pendingEnrollment}
-                  message={
-                    isConfirming
-                      ? "Mastercard UI closed. Waiting for Crossmint to mark the card verified..."
-                      : "Complete passkey verification to enable agentic payments..."
-                  }
-                  onComplete={() => finishEnrollment(pmId)}
-                  onError={() => { setVerifyingId(null); setPendingEnrollment(null); }}
-                  onCancel={() => { setVerifyingId(null); setPendingEnrollment(null); }}
-                />
+                );
+              })}
+              {onAddCard && (
+                <button
+                  type="button"
+                  onClick={() => { setOpen(false); onAddCard(); }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 border-t border-[rgba(0,0,0,0.06)] hover:bg-[#F6F6F6] transition-colors text-left"
+                >
+                  <Plus className="size-4 text-[#00150d] shrink-0" />
+                  <span className="text-sm font-medium text-[#00150d]">Add credit card</span>
+                </button>
               )}
             </div>
-          );
-        })}
-        {onAddCard && (
-          <button onClick={onAddCard} className="flex items-center gap-3 pl-4 group">
-            <Plus className="size-5 text-[#00150d] group-hover:text-[#05B959] transition-colors shrink-0" />
-            <span className="text-sm font-medium text-[#00150d] group-hover:text-[#05B959] transition-colors">
-              Add credit card
+          )}
+        </div>
+        {deleting
+          ? <Loader2 className="size-3.5 animate-spin text-[#00150d]/40" />
+          : <DotsMenu onDelete={handleDelete} deleteLabel="Delete card" />}
+      </div>
+
+      {/* Selected card: its rail, or the one-time registration */}
+      {registration ? (
+        <div className="px-1">
+          <RailDetail registration={registration} checking={checking} checkMessage={checkMessage} onCheckAgain={() => void handleCheckAgain()} />
+        </div>
+      ) : (
+        <div
+          className={`flex items-center justify-between gap-3 pl-3 pr-2 py-2 rounded-md border ${
+            registerError ? "bg-[#FDF2F2] border-[#F4C7C7]" : "bg-[#F5FCF8] border-[#DDF5E8]"
+          }`}
+        >
+          <div className={`flex items-center gap-2 text-xs ${registerError ? "text-[#B42318]" : "text-[#03A14D]"}`}>
+            <Info className="size-3.5 shrink-0" />
+            <span>
+              {registering
+                ? "PUT /payment-methods/{id}/order-intent-registration…"
+                : registerError || "Register this card once. The response lists the rails it can use."}
             </span>
+          </div>
+          <button
+            onClick={handleRegister}
+            disabled={registering}
+            className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          >
+            {registering && <Loader2 className="size-3.5 animate-spin" />}
+            <span>{registering ? "Registering" : "Register card"}</span>
           </button>
-        )}
-        </>
+        </div>
       )}
     </div>
   );
