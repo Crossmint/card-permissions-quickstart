@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStytch, useStytchUser } from "@stytch/nextjs";
+import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import {
   ArrowLeft,
   Bot,
@@ -15,15 +16,44 @@ import {
   ShieldCheck,
   ShoppingBag,
   Sparkles,
+  X,
 } from "lucide-react";
-import { fetchAllData, fetchCardCredentials } from "@/lib/crossmint-api";
-import type { AgentResponse, CardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
+import {
+  createNewAgent,
+  createNewOrderIntent,
+  ensureEnrollment,
+  fetchAllData,
+  fetchCardCredentials,
+  fetchOrderIntent,
+} from "@/lib/crossmint-api";
+import type {
+  AgenticEnrollmentResponse,
+  AgentResponse,
+  CardCredentials,
+  OrderIntentResponse,
+  PaymentMethodResponse,
+} from "@/lib/crossmint-types";
+import { verificationAppearance } from "@/lib/verification-appearance";
+import { EnrollmentVerificationStep } from "@/components/enrollment-verification-step";
+import { SaveCardSection } from "@/components/save-card-section";
 
-type AgentStage = "idle" | "planning" | "checking" | "securing" | "ready" | "error";
+type AgentStage =
+  | "idle"
+  | "planning"
+  | "checking"
+  | "registering"
+  | "creating"
+  | "authorizing"
+  | "securing"
+  | "ready"
+  | "blocked"
+  | "error";
+type FailureStep = "agent" | "allowance" | "credentials" | null;
+type PendingEnrollment = Extract<AgenticEnrollmentResponse, { status: "pending" }>;
 
 const TASK = {
   request: "Build a grocery cart at Whole Foods",
-  budget: "$45.00",
+  budget: 45,
 };
 
 const MOCK_CART = [
@@ -33,7 +63,8 @@ const MOCK_CART = [
   { label: "Delivery", price: "$4.99" },
 ];
 
-const MOCK_TOTAL = "$42.18";
+const MOCK_TOTAL_AMOUNT = 42.18;
+const MOCK_TOTAL = `$${MOCK_TOTAL_AMOUNT.toFixed(2)}`;
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -56,12 +87,19 @@ function allowanceLimit(orderIntent: OrderIntentResponse) {
   return `${maxAmount.value} ${maxAmount.details.currency.toUpperCase()}`;
 }
 
+function paymentMethodName(paymentMethod: PaymentMethodResponse) {
+  if (!paymentMethod.card) {
+    return "Saved payment method";
+  }
+  return `${paymentMethod.card.brand} •••• ${paymentMethod.card.last4}`;
+}
+
 function ActivityItem({
   label,
   state,
 }: {
   label: string;
-  state: "waiting" | "running" | "done";
+  state: "waiting" | "running" | "done" | "failed";
 }) {
   return (
     <div className={`flex items-center gap-3 ${state === "waiting" ? "opacity-35" : ""}`}>
@@ -69,6 +107,8 @@ function ActivityItem({
         className={`size-6 rounded-full flex items-center justify-center shrink-0 ${
           state === "done"
             ? "bg-[#05B959] text-white"
+            : state === "failed"
+              ? "bg-red-50 text-red-600"
             : state === "running"
               ? "bg-[#05B959]/10 text-[#05B959]"
               : "bg-black/[0.06] text-[#00150d]/50"
@@ -76,6 +116,8 @@ function ActivityItem({
       >
         {state === "done" ? (
           <Check className="size-3.5 stroke-[3]" />
+        ) : state === "failed" ? (
+          <X className="size-3.5 stroke-[2.5]" />
         ) : state === "running" ? (
           <Loader2 className="size-3.5 animate-spin" />
         ) : (
@@ -92,14 +134,34 @@ export default function AgentDemoPage() {
   const { user, isInitialized } = useStytchUser();
   const router = useRouter();
   const [agent, setAgent] = useState<AgentResponse | null>(null);
-  const [orderIntents, setOrderIntents] = useState<OrderIntentResponse[]>([]);
+  const [cards, setCards] = useState<PaymentMethodResponse[]>([]);
+  const [enrollmentStatuses, setEnrollmentStatuses] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [showAddCard, setShowAddCard] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
+  const [pendingEnrollment, setPendingEnrollment] = useState<PendingEnrollment | null>(null);
   const [stage, setStage] = useState<AgentStage>("idle");
+  const [taskAllowance, setTaskAllowance] = useState<OrderIntentResponse | null>(null);
   const [credentials, setCredentials] = useState<CardCredentials | null>(null);
   const [runError, setRunError] = useState("");
+  const [failureStep, setFailureStep] = useState<FailureStep>(null);
 
   const getJwt = useCallback(() => stytch.session.getTokens()?.session_jwt ?? "", [stytch]);
+
+  const loadContext = useCallback(async () => {
+    try {
+      const data = await fetchAllData(getJwt());
+      setAgent(data.agents[0] ?? null);
+      setCards(data.cards);
+      setEnrollmentStatuses(data.enrollmentStatuses);
+      setLoadError("");
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Failed to load agent context");
+    } finally {
+      setLoading(false);
+    }
+  }, [getJwt]);
 
   useEffect(() => {
     if (!isInitialized) {
@@ -110,21 +172,8 @@ export default function AgentDemoPage() {
       return;
     }
 
-    const load = async () => {
-      try {
-        const data = await fetchAllData(getJwt());
-        const currentAgent = data.agents[0] ?? null;
-        setAgent(currentAgent);
-        setOrderIntents(data.orderIntents);
-      } catch (error) {
-        setLoadError(error instanceof Error ? error.message : "Failed to load agent context");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void load();
-  }, [getJwt, isInitialized, router, user]);
+    void loadContext();
+  }, [isInitialized, loadContext, router, user]);
 
   useEffect(() => {
     if (!credentials) {
@@ -141,25 +190,47 @@ export default function AgentDemoPage() {
     return () => window.clearTimeout(timer);
   }, [credentials]);
 
-  const activeAllowance = agent
-    ? orderIntents.find((orderIntent) => orderIntent.agentId === agent.agentId && orderIntent.phase === "active")
-    : undefined;
+  const verifiedPaymentMethod = cards.find(
+    (card) => enrollmentStatuses[card.paymentMethodId] === "active",
+  );
+  const paymentMethodToVerify = cards.find(
+    (card) => enrollmentStatuses[card.paymentMethodId] !== "active",
+  );
 
-  const runAgent = async () => {
-    if (!activeAllowance || stage === "planning" || stage === "checking" || stage === "securing") {
+  const markCardVerified = (paymentMethodId: string) => {
+    setEnrollmentStatuses((current) => ({ ...current, [paymentMethodId]: "active" }));
+    setPendingEnrollment(null);
+    setRunError("");
+  };
+
+  const verifyCard = async () => {
+    if (!paymentMethodToVerify || !user) {
       return;
     }
-
-    setCredentials(null);
+    setEnrolling(true);
     setRunError("");
-    setStage("planning");
-    await wait(650);
-    setStage("checking");
-    await wait(750);
-    setStage("securing");
-
     try {
-      const result = await fetchCardCredentials(getJwt(), activeAllowance.orderIntentId, {
+      const enrollment = await ensureEnrollment(
+        getJwt(),
+        paymentMethodToVerify.paymentMethodId,
+        user.emails[0]?.email ?? "",
+      );
+      if (enrollment.status === "active") {
+        markCardVerified(paymentMethodToVerify.paymentMethodId);
+      } else if (enrollment.status === "pending") {
+        setPendingEnrollment(enrollment);
+      }
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Failed to start card verification");
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
+  const secureCard = async (orderIntentId: string) => {
+    setStage("securing");
+    try {
+      const result = await fetchCardCredentials(getJwt(), orderIntentId, {
         name: "Whole Foods",
         url: "https://www.wholefoodsmarket.com",
         countryCode: "US",
@@ -167,8 +238,121 @@ export default function AgentDemoPage() {
       setCredentials(result);
       setStage("ready");
     } catch (error) {
+      setFailureStep("credentials");
       setRunError(error instanceof Error ? error.message : "Failed to secure an agent card");
       setStage("error");
+    }
+  };
+
+  const completeAllowanceApproval = async () => {
+    if (!taskAllowance) {
+      return;
+    }
+    try {
+      const refreshedAllowance = await fetchOrderIntent(getJwt(), taskAllowance.orderIntentId);
+      if (refreshedAllowance.phase !== "active") {
+        throw new Error("The allowance is still waiting for approval");
+      }
+      setTaskAllowance(refreshedAllowance);
+      await secureCard(refreshedAllowance.orderIntentId);
+    } catch (error) {
+      setFailureStep("allowance");
+      setRunError(error instanceof Error ? error.message : "Failed to activate the allowance");
+      setStage("error");
+    }
+  };
+
+  const runAgent = async () => {
+    if (
+      !verifiedPaymentMethod
+      || stage === "planning"
+      || stage === "checking"
+      || stage === "registering"
+      || stage === "creating"
+      || stage === "authorizing"
+      || stage === "securing"
+    ) {
+      return;
+    }
+
+    setTaskAllowance(null);
+    setCredentials(null);
+    setRunError("");
+    setFailureStep(null);
+    setStage("planning");
+    await wait(650);
+    setStage("checking");
+    await wait(750);
+
+    if (MOCK_TOTAL_AMOUNT > TASK.budget) {
+      setRunError(`The ${MOCK_TOTAL} cart exceeds the $${TASK.budget.toFixed(2)} task budget.`);
+      setStage("blocked");
+      return;
+    }
+
+    let currentAgent = agent;
+    if (!currentAgent) {
+      setStage("registering");
+      try {
+        currentAgent = await createNewAgent(
+          getJwt(),
+          "Shopping Agent",
+          "Agent for the scripted grocery checkout demo",
+        );
+        setAgent(currentAgent);
+      } catch (error) {
+        setFailureStep("agent");
+        setRunError(error instanceof Error ? error.message : "Failed to create the shopping agent");
+        setStage("error");
+        return;
+      }
+    }
+
+    try {
+      setStage("creating");
+      const allowance = await createNewOrderIntent(
+        getJwt(),
+        currentAgent.agentId,
+        verifiedPaymentMethod.paymentMethodId,
+        [
+          {
+            type: "maxAmount",
+            value: TASK.budget.toFixed(2),
+            details: { currency: "usd" },
+          },
+          { type: "description", value: "Whole Foods grocery cart" },
+        ],
+      );
+      setTaskAllowance(allowance);
+
+      if (allowance.phase === "requires-verification") {
+        setStage("authorizing");
+      } else {
+        await secureCard(allowance.orderIntentId);
+      }
+    } catch (error) {
+      setFailureStep("allowance");
+      setRunError(error instanceof Error ? error.message : "Failed to prepare the task allowance");
+      setStage("error");
+    }
+  };
+
+  const isRunning = [
+    "planning",
+    "checking",
+    "registering",
+    "creating",
+    "authorizing",
+    "securing",
+  ].includes(stage);
+
+  const handlePrimaryAction = () => {
+    if (cards.length === 0) {
+      setShowAddCard(true);
+    } else if (!verifiedPaymentMethod) {
+      void verifyCard();
+    } else {
+      void runAgent();
     }
   };
 
@@ -228,11 +412,72 @@ export default function AgentDemoPage() {
               <div className="w-full max-w-[78%] rounded-2xl rounded-tr-sm bg-[#00150d] text-white px-4 py-3">
                 <div className="text-[10px] uppercase tracking-[0.14em] text-white/45 mb-2">Assigned task</div>
                 <div className="text-sm font-medium">{TASK.request}</div>
-                <div className="text-xs text-white/55 mt-1">Stay under {TASK.budget}</div>
+                <div className="text-xs text-white/55 mt-1">Stay under ${TASK.budget.toFixed(2)}</div>
               </div>
             </div>
 
-            {(stage === "planning" || stage === "checking" || stage === "securing") && (
+            {cards.length === 0 && (
+              <div className="flex items-start gap-3 max-w-[92%]">
+                <div className="size-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                  <CreditCard className="size-4" />
+                </div>
+                <div className="rounded-2xl rounded-tl-sm bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                  I need a payment source before I can request an allowance. Add a card, then I’ll guide you through verification.
+                </div>
+              </div>
+            )}
+
+            {showAddCard && cards.length === 0 && (
+              <div className="ml-11 max-w-[92%]">
+                <SaveCardSection
+                  jwt={getJwt()}
+                  onCardSaved={() => {
+                    setShowAddCard(false);
+                    void loadContext();
+                  }}
+                  onCancel={() => setShowAddCard(false)}
+                />
+              </div>
+            )}
+
+            {cards.length > 0 && !verifiedPaymentMethod && (
+              <div className="flex items-start gap-3 max-w-[92%]">
+                <div className="size-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="size-4" />
+                </div>
+                <div className="rounded-2xl rounded-tl-sm bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                  Your saved card must be verified for agent payments. Continue with passkey verification to enable it.
+                </div>
+              </div>
+            )}
+
+            {pendingEnrollment && paymentMethodToVerify && (
+              <div className="ml-11 max-w-[92%]">
+                <EnrollmentVerificationStep
+                  enrollment={pendingEnrollment}
+                  message="Verify this card with your passkey to enable agent payments..."
+                  onComplete={() => markCardVerified(paymentMethodToVerify.paymentMethodId)}
+                  onError={() => {
+                    setPendingEnrollment(null);
+                    setRunError("Card verification failed. Please try again.");
+                  }}
+                  onCancel={() => setPendingEnrollment(null)}
+                />
+              </div>
+            )}
+
+            {runError && stage === "idle" && !verifiedPaymentMethod && (
+              <div className="flex items-start gap-3 max-w-[85%]">
+                <div className="size-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="size-4" />
+                </div>
+                <div className="rounded-2xl rounded-tl-sm bg-red-50 px-4 py-3 text-sm text-red-700">
+                  I couldn’t verify the payment card. {runError}
+                </div>
+              </div>
+            )}
+
+            {isRunning && stage !== "authorizing" && (
               <div className="flex items-start gap-3 max-w-[88%]">
                 <div className="size-8 rounded-lg bg-[#05B959]/10 text-[#05B959] flex items-center justify-center shrink-0">
                   <Bot className="size-4" />
@@ -244,7 +489,11 @@ export default function AgentDemoPage() {
                       ? "Building a grocery cart for the $45 budget…"
                       : stage === "checking"
                         ? `Cart ready at ${MOCK_TOTAL}. Comparing it with your spending rules…`
-                        : "Approved. Requesting a Whole Foods-scoped agent card…"}
+                        : stage === "registering"
+                          ? "No agent found. Registering a Shopping Agent for this task…"
+                          : stage === "creating"
+                            ? "Creating a fresh $45 task allowance for your approval…"
+                            : "Passkey approved. Requesting a Whole Foods-scoped agent card…"}
                   </div>
                   {stage !== "planning" && (
                     <div className="inline-flex items-center gap-1.5 rounded-md bg-white px-2 py-1 text-[11px] text-[#00150d]/50">
@@ -256,14 +505,39 @@ export default function AgentDemoPage() {
               </div>
             )}
 
-            {stage === "ready" && credentials && activeAllowance && (
+            {stage === "authorizing" && taskAllowance?.phase === "requires-verification" && (
+              <div className="flex items-start gap-3 max-w-[92%]">
+                <div className="size-8 rounded-lg bg-[#05B959]/10 text-[#05B959] flex items-center justify-center shrink-0">
+                  <ShieldCheck className="size-4" />
+                </div>
+                <div className="space-y-3 min-w-0 flex-1">
+                  <div className="rounded-2xl rounded-tl-sm bg-[#F6F6F6] px-4 py-3 text-sm leading-6">
+                    I created a fresh <span className="font-medium">$45 Whole Foods allowance</span>. Approve it with your passkey before I access the agent card.
+                  </div>
+                  <div className="rounded-xl border border-black/[0.08] overflow-hidden bg-white p-4">
+                    <OrderIntentVerification
+                      orderIntent={taskAllowance}
+                      appearance={verificationAppearance}
+                      onVerificationComplete={() => void completeAllowanceApproval()}
+                      onVerificationError={() => {
+                        setFailureStep("allowance");
+                        setRunError("Passkey authorization failed. Please run the task again.");
+                        setStage("error");
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {stage === "ready" && credentials && taskAllowance && (
               <div className="flex items-start gap-3 max-w-[92%]">
                 <div className="size-8 rounded-lg bg-[#05B959]/10 text-[#05B959] flex items-center justify-center shrink-0">
                   <Bot className="size-4" />
                 </div>
                 <div className="space-y-3 min-w-0">
                   <div className="rounded-2xl rounded-tl-sm bg-[#F6F6F6] px-4 py-3 text-sm leading-6">
-                    I built a <span className="font-medium">{MOCK_TOTAL}</span> grocery cart, confirmed it is within your <span className="font-medium">{allowanceLimit(activeAllowance)}</span> {allowanceName(activeAllowance)} allowance, and secured a Whole Foods-only card. Checkout is prepared.
+                    I built a <span className="font-medium">{MOCK_TOTAL}</span> grocery cart, received approval for the <span className="font-medium">{allowanceLimit(taskAllowance)}</span> {allowanceName(taskAllowance)} allowance, and secured a Whole Foods-only card. Checkout is prepared.
                   </div>
                   <div className="rounded-xl border border-black/[0.08] bg-white overflow-hidden">
                     <div className="flex items-center justify-between bg-[#F6F6F6] px-4 py-3">
@@ -318,13 +592,24 @@ export default function AgentDemoPage() {
               </div>
             )}
 
+            {stage === "blocked" && (
+              <div className="flex items-start gap-3 max-w-[85%]">
+                <div className="size-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                  <Bot className="size-4" />
+                </div>
+                <div className="rounded-2xl rounded-tl-sm bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  I stopped before requesting an allowance. {runError}
+                </div>
+              </div>
+            )}
+
             {stage === "error" && (
               <div className="flex items-start gap-3 max-w-[85%]">
                 <div className="size-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center shrink-0">
                   <Bot className="size-4" />
                 </div>
                 <div className="rounded-2xl rounded-tl-sm bg-red-50 px-4 py-3 text-sm text-red-700">
-                  I couldn’t secure the card. {runError}
+                  I couldn’t complete the {failureStep === "agent" ? "agent setup" : failureStep === "allowance" ? "allowance approval" : "card retrieval"}. {runError}
                 </div>
               </div>
             )}
@@ -333,20 +618,30 @@ export default function AgentDemoPage() {
           <div className="p-4 border-t border-black/[0.06] flex items-center justify-between gap-4">
             <div className="min-w-0">
               <div className="text-xs font-medium truncate">{TASK.request}</div>
-              <div className="text-[11px] text-[#00150d]/40 mt-0.5">Budget {TASK.budget} · no purchase will be made</div>
+              <div className="text-[11px] text-[#00150d]/40 mt-0.5">Budget ${TASK.budget.toFixed(2)} · no purchase will be made</div>
             </div>
             <button
               type="button"
-              onClick={() => void runAgent()}
-              disabled={!activeAllowance || stage === "planning" || stage === "checking" || stage === "securing"}
+              onClick={handlePrimaryAction}
+              disabled={showAddCard || enrolling || pendingEnrollment !== null || isRunning}
               className="shrink-0 h-10 rounded-lg bg-[#05B959] text-white px-4 flex items-center gap-2 text-xs font-medium hover:bg-[#049d4c] disabled:opacity-35 transition-colors"
             >
-              {stage === "planning" || stage === "checking" || stage === "securing" ? (
+              {enrolling || isRunning ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Send className="size-4" />
               )}
-              {stage === "ready" ? "Run again" : "Run grocery agent"}
+              {cards.length === 0
+                ? showAddCard
+                  ? "Add your card above"
+                  : "Add payment card"
+                : !verifiedPaymentMethod
+                  ? pendingEnrollment
+                    ? "Awaiting passkey"
+                    : "Verify payment card"
+                  : stage === "ready"
+                    ? "Run again"
+                    : "Run grocery agent"}
             </button>
           </div>
         </section>
@@ -363,12 +658,54 @@ export default function AgentDemoPage() {
                 state={stage === "planning" ? "running" : stage === "idle" ? "waiting" : "done"}
               />
               <ActivityItem
-                label="Check spending rules"
-                state={stage === "checking" ? "running" : stage === "securing" || stage === "ready" ? "done" : "waiting"}
+                label="Check $45 task budget"
+                state={
+                  stage === "checking"
+                    ? "running"
+                    : stage === "blocked"
+                      ? "failed"
+                      : ["registering", "creating", "authorizing", "securing", "ready", "error"].includes(stage)
+                        ? "done"
+                        : "waiting"
+                }
+              />
+              <ActivityItem
+                label="Prepare shopping agent"
+                state={
+                  stage === "registering"
+                    ? "running"
+                    : stage === "error" && failureStep === "agent"
+                      ? "failed"
+                      : ["creating", "authorizing", "securing", "ready"].includes(stage)
+                          || (stage === "error" && failureStep !== "agent")
+                        ? "done"
+                        : "waiting"
+                }
+              />
+              <ActivityItem
+                label="Approve $45 allowance"
+                state={
+                  stage === "creating" || stage === "authorizing"
+                    ? "running"
+                    : stage === "error" && failureStep === "allowance"
+                      ? "failed"
+                      : ["securing", "ready"].includes(stage)
+                          || (stage === "error" && failureStep === "credentials")
+                        ? "done"
+                        : "waiting"
+                }
               />
               <ActivityItem
                 label="Secure agent card"
-                state={stage === "securing" ? "running" : stage === "ready" ? "done" : "waiting"}
+                state={
+                  stage === "securing"
+                    ? "running"
+                    : stage === "error" && failureStep === "credentials"
+                      ? "failed"
+                      : stage === "ready"
+                        ? "done"
+                        : "waiting"
+                }
               />
               <ActivityItem label="Prepare checkout" state={stage === "ready" ? "done" : "waiting"} />
             </div>
@@ -381,30 +718,68 @@ export default function AgentDemoPage() {
             </div>
             {loadError ? (
               <p className="text-xs text-red-600">{loadError}</p>
-            ) : activeAllowance && agent ? (
+            ) : cards.length === 0 ? (
+              <div className="space-y-3">
+                <p className="text-xs leading-5 text-[#00150d]/50">
+                  No payment card is saved yet. Add one here to continue the agent setup.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowAddCard(true)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-[#05B959] hover:text-[#049d4c]"
+                >
+                  <CreditCard className="size-3.5" />
+                  Add payment card
+                </button>
+              </div>
+            ) : !verifiedPaymentMethod ? (
               <div className="space-y-3 text-xs">
                 <div>
-                  <div className="text-[#00150d]/40 mb-1">Agent</div>
-                  <div className="font-medium truncate">{agent.metadata.name}</div>
+                  <div className="text-[#00150d]/40 mb-1">Payment source</div>
+                  <div className="font-medium">{paymentMethodName(paymentMethodToVerify ?? cards[0])}</div>
                 </div>
-                <div className="h-px bg-black/[0.06]" />
-                <div>
-                  <div className="text-[#00150d]/40 mb-1">Allowance</div>
-                  <div className="font-medium">{allowanceName(activeAllowance)}</div>
-                  <div className="text-[#00150d]/50 mt-0.5">{allowanceLimit(activeAllowance)}</div>
-                </div>
-                <div className="flex items-center gap-1.5 rounded-lg bg-[#05B959]/[0.07] text-[#048d45] px-2.5 py-2">
+                <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 text-amber-700 px-2.5 py-2">
                   <ShieldCheck className="size-3.5" />
-                  Ready for agent payments
+                  Passkey verification required
                 </div>
               </div>
             ) : (
-              <div className="space-y-3">
-                <p className="text-xs leading-5 text-[#00150d]/50">Create an active allowance before running the agent demo.</p>
-                <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-medium text-[#05B959] hover:text-[#049d4c]">
-                  <ShoppingBag className="size-3.5" />
-                  Set up card permissions
-                </Link>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <div className="text-[#00150d]/40 mb-1">Agent</div>
+                  <div className="font-medium truncate">{agent?.metadata.name ?? "Created on first run"}</div>
+                </div>
+                <div className="h-px bg-black/[0.06]" />
+                <div>
+                  <div className="text-[#00150d]/40 mb-1">Payment source</div>
+                  <div className="font-medium">{paymentMethodName(verifiedPaymentMethod)}</div>
+                </div>
+                <div className="h-px bg-black/[0.06]" />
+                <div>
+                  <div className="text-[#00150d]/40 mb-1">Task allowance</div>
+                  <div className="font-medium">
+                    {taskAllowance ? allowanceName(taskAllowance) : "$45 Whole Foods allowance"}
+                  </div>
+                  <div className="text-[#00150d]/50 mt-0.5">
+                    {taskAllowance ? allowanceLimit(taskAllowance) : "Created fresh on each run"}
+                  </div>
+                </div>
+                <div
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-2 ${
+                    stage === "authorizing"
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-[#05B959]/[0.07] text-[#048d45]"
+                  }`}
+                >
+                  <ShieldCheck className="size-3.5" />
+                  {stage === "authorizing"
+                    ? "Awaiting passkey approval"
+                    : stage === "securing"
+                      ? "Retrieving the agent card"
+                      : stage === "ready"
+                        ? "Agent card ready"
+                        : "Ready to request an allowance"}
+                </div>
               </div>
             )}
           </div>
