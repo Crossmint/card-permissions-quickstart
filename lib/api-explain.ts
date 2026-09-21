@@ -164,11 +164,12 @@ function explainCall(trace: ApiTrace): Explained {
       return {
         step,
         important: true,
-        title: "Fetch the saved card on the encrypted-card rail, encrypted to a one-time key from the browser",
+        title: "Fetch the saved card on the encrypted-card rail, encrypted to the RSA public key sent from the browser",
         facts: trace.ok
           ? [
-              "Credential issued by encrypted-card as a JWE. The browser decrypts it. The server never sees the number.",
-              "Used when this rail is selected, or as fallback after another rail failed to mint.",
+              "Credential issued by encrypted-card as a JWE. Only the matching private key can decrypt it. The server never sees the number.",
+              "When you select this rail, the app sends your public key and shows the JWE. Decrypt it with your private key in the app.",
+              "As fallback after another rail failed to mint, the app uses a one-time key and decrypts the JWE here.",
             ]
           : [],
         rails,

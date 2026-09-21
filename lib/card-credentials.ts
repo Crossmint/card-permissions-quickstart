@@ -4,7 +4,7 @@
 // immediately retry on encrypted-card.
 
 import { fetchAgenticTokenCredentials, fetchEncryptedCardCredentials, fetchOrderIntent, fetchSptCredentials } from "@/lib/crossmint-api";
-import type { AgentCardCredentials, CardCredentialValue, Merchant, OrderIntentResponse, RailName, RevealedCredentials } from "@/lib/crossmint-types";
+import type { AgentCardCredentials, CardCredentialValue, Merchant, OrderIntentResponse, RailName, RevealedCredentials, RsaPublicJwk } from "@/lib/crossmint-types";
 import { decryptCardJwe, generateEphemeralRsaKeyPair } from "@/lib/encrypted-card";
 import { activeCardRail, activeCardRails, activeEncryptedCardRail, activeSptRail, availableAmount, railErrorCode } from "@/lib/rails";
 
@@ -35,7 +35,14 @@ function activeRail(orderIntent: OrderIntentResponse, requested?: RailName) {
   return activeCardRail(orderIntent) ?? spt;
 }
 
-async function revealEncryptedCard(jwt: string, orderIntentId: string): Promise<RevealedCredentials> {
+// With a user-supplied public key this tab has no private key, so the JWE is
+// returned as is. Otherwise a one-time keypair is generated and the JWE is
+// decrypted here.
+async function revealEncryptedCard(jwt: string, orderIntentId: string, publicKey?: RsaPublicJwk): Promise<RevealedCredentials> {
+  if (publicKey) {
+    const response = await fetchEncryptedCardCredentials(jwt, orderIntentId, publicKey);
+    return { kind: "jwe", rail: "encrypted-card", jwe: response.credential.value };
+  }
   const { publicJwk, privateKey } = await generateEphemeralRsaKeyPair();
   const response = await fetchEncryptedCardCredentials(jwt, orderIntentId, publicJwk);
   const card = await decryptCardJwe(response.credential.value, privateKey);
@@ -70,6 +77,9 @@ export async function revealCardCredentials(
     merchant?: Merchant;
     rail?: RailName;
     networkBusinessProfile?: string;
+    // encrypted-card only. Encrypt to this key instead of a one-time key. The
+    // result is then a JWE that only the matching private key can read.
+    publicKey?: RsaPublicJwk;
   } = {},
 ): Promise<RevealedCredentials> {
   const rail = activeRail(orderIntent, options.rail);
@@ -79,7 +89,7 @@ export async function revealCardCredentials(
   }
 
   if (rail.rail === "encrypted-card") {
-    return revealEncryptedCard(jwt, orderIntent.orderIntentId);
+    return revealEncryptedCard(jwt, orderIntent.orderIntentId, options.publicKey);
   }
 
   const merchant = orderIntent.merchant ? undefined : options.merchant;

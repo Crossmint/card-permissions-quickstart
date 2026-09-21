@@ -187,6 +187,14 @@ export type RevealedCredentials =
       rail: "spt";
       token: string;
       expiresAt: string;
+    }
+  | {
+      // The saved card as a compact JWE, encrypted to a public key the user supplied.
+      // Only the matching private key can read it.
+      kind: "jwe";
+      rail: "encrypted-card";
+      jwe: string;
+      expiresAt?: string;
     };
 
 export type AgentCardCredentials = Extract<RevealedCredentials, { kind: "card" }>;

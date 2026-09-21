@@ -38,6 +38,8 @@ The app prefers `agentic-token` when it is active and lets you pick another acti
 
 For the encrypted-card rail the browser generates a one-time RSA-OAEP-256 keypair with WebCrypto, sends only the public JWK, and decrypts the returned JWE with `jose`. The private key and the card number never reach this app's server. See `lib/encrypted-card.ts`.
 
+When you select `encrypted-card` in Step 3, reveal and decrypt are two steps. Paste an RSA 2048 public key in PEM (`BEGIN PUBLIC KEY`, SPKI), or click "Generate a keypair" to fill one in. "Reveal details" sends that key and shows the returned JWE, not the card. Then paste the matching private key (`BEGIN PRIVATE KEY`, PKCS#8) under "Decrypt in this browser" and click "Decrypt" to read the card locally. The generated private key is prefilled there. The fallback after a failed mint uses a one-time key and decrypts at once.
+
 ## See the API calls
 The app shows one step at a time. The column on the right lists the Crossmint API calls that step makes, as they happen: method, path, status, a one-line explanation, the rail involved, and the raw request and response. Only the calls that tell the story appear; list and poll reads stay in the server log.
 
