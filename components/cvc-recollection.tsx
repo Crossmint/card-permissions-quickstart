@@ -12,7 +12,7 @@ import { Loader2, ShieldCheck } from "lucide-react";
 import { CrossmintCvcRecollection } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
-import { verificationAppearance } from "@/lib/verification-appearance";
+import { cvcRecollectionAppearance } from "@/lib/verification-appearance";
 
 // react-ui exports the component but not its prop or error types (they live in
 // @crossmint/client-sdk-base, which is not a direct dependency here).
@@ -94,7 +94,7 @@ export function CvcRecollection({
             key={attempt}
             jwt={jwt}
             paymentMethodId={orderIntent.paymentMethodId}
-            appearance={verificationAppearance}
+            appearance={cvcRecollectionAppearance}
             onComplete={() => void finish()}
             onError={(err) => {
               console.error("CVC recollection error:", err);

@@ -243,5 +243,8 @@ function explainCall(trace: ApiTrace): Explained {
     ].filter(Boolean);
     return { step, important: true, title: "Re-read the allowance after minting. The balance goes down.", facts, rails, error };
   }
+  if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection")) {
+    return { step, important: true, title: "Re-read the allowance. The encrypted-card rail is waiting for the card's CVC.", facts: intentFacts(intent, rails), rails, error };
+  }
   return { step, important: false, title: "Re-read the allowance. Rail status and balance come live from the provider.", facts: intentFacts(intent, rails), rails, error };
 }
