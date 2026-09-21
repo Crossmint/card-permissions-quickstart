@@ -6,13 +6,14 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { RailName, RailProvider } from "@/lib/crossmint-types";
 
-type Status = "enabled" | "active" | "pending" | "pending_verification" | "error";
+type Status = "enabled" | "active" | "pending" | "pending_verification" | "pending_cvc_recollection" | "error";
 
 const STATUS_TEXT: Record<Status, string> = {
   enabled: "ready",
   active: "active",
   pending: "setting up",
   pending_verification: "needs verification",
+  pending_cvc_recollection: "needs CVC",
   error: "unavailable",
 };
 
@@ -64,7 +65,7 @@ export function RailBadge({
 }) {
   // Only the rail name is shown. Provider, status and error code stay in the tooltip.
   const isError = status === "error";
-  const isPending = status === "pending" || status === "pending_verification";
+  const isPending = status === "pending" || status === "pending_verification" || status === "pending_cvc_recollection";
   const tone = isError
     ? "border-[#F4C7C7] bg-[#FDF2F2] text-[#B42318]"
     : isPending

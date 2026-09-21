@@ -32,11 +32,14 @@ An order intent exposes one or more **rails**. Each rail is an independent way t
 |------|-------|--------------|------------|
 | `agentic-token` | Visa (`vic`) and Mastercard (`agentpay`) | Bank verification on the first allowance | One-time card number, expires with `expiresAt` |
 | `spt` | Stripe merchants | Verification may be required | Stripe Shared Payment Token identifier |
-| `encrypted-card` | Any eligible saved card | None | The saved card as a JWE, decrypted in the browser |
+| `encrypted-card` | Any eligible saved card | CVC re-entry once the saved CVC ages out | The saved card as a JWE, decrypted in the browser |
 
 The app prefers `agentic-token` when it is active and lets you pick another active rail. If that mint fails and the allowance still has balance, it immediately retries on `encrypted-card`. The `spt` rail needs a Stripe Network Business Profile ID. See `lib/rails.ts` and `lib/card-credentials.ts`.
 
 For the encrypted-card rail the browser generates a one-time RSA-OAEP-256 keypair with WebCrypto, sends only the public JWK, and decrypts the returned JWE with `jose`. The private key and the card number never reach this app's server. See `lib/encrypted-card.ts`.
+
+### CVC recollection
+Crossmint keeps the CVC you typed when saving the card for a limited time. Once it ages out, the allowance reports `encrypted-card` with `status: "pending_cvc_recollection"`, and `POST /order-intents/{id}/credentials` on that rail answers `409` with `code: "ORDER_INTENT_CVC_RECOLLECTION_REQUIRED"`. The app keeps that allowance in Step 3 with the rail marked `needs CVC`, and renders `CrossmintCvcRecollection` from `@crossmint/client-sdk-react-ui` in its place. It is Crossmint's hosted CVC field in an iframe: the digits go to the vault directly, this app never receives them, and `onComplete` fires once the vault has verified the write. The app then re-reads the allowance and the rail comes back `active`. If a mint hits the 409 mid-session (the app read the allowance before the CVC aged out), it re-reads the allowance and switches to the CVC form on its own. See `components/cvc-recollection.tsx` and `lib/rails.ts`.
 
 When you select `encrypted-card` in Step 3, reveal and decrypt are two steps. Paste an RSA 2048 public key in PEM (`BEGIN PUBLIC KEY`, SPKI), or click "Generate a keypair" to fill one in. "Reveal details" sends that key and shows the returned JWE, not the card. Then paste the matching private key (`BEGIN PRIVATE KEY`, PKCS#8) under "Decrypt in this browser" and click "Decrypt" to read the card locally. The generated private key is prefilled there. The fallback after a failed mint uses a one-time key and decrypts at once.
 

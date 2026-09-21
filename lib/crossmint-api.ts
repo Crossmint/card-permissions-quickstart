@@ -36,13 +36,28 @@ import type {
 
 export type { AllData };
 
+/** A failed Crossmint call, with the API's error `code` when it sent one (e.g. ORDER_INTENT_CVC_RECOLLECTION_REQUIRED). */
+export class CrossmintApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "CrossmintApiError";
+  }
+}
+
+export function apiErrorCode(err: unknown): string | undefined {
+  return err instanceof CrossmintApiError ? err.code : undefined;
+}
+
 /** Record traces, then unwrap the data or rethrow the server-side failure. */
 async function unwrap<T>(pending: Promise<ActionResult<T>>): Promise<T> {
   const { data, traces } = await pending;
   addTraces(traces);
-  const failure = data as unknown as { __error?: string } | null;
+  const failure = data as unknown as { __error?: string; __code?: string } | null;
   if (failure && typeof failure === "object" && typeof failure.__error === "string") {
-    throw new Error(failure.__error);
+    throw new CrossmintApiError(failure.__error, failure.__code);
   }
   return data;
 }

@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole } from "lucide-react";
-import type { Merchant, OrderIntentResponse, RailName, RevealedCredentials, RsaPublicJwk } from "@/lib/crossmint-types";
+import { CVC_RECOLLECTION_REQUIRED_CODE, type Merchant, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { decryptCardJwe, generateRsaKeyPairPem, importRsaPrivateKeyPem, importRsaPublicKeyPem } from "@/lib/encrypted-card";
 import { errors as joseErrors } from "jose";
-import { activeCardRails, activeSptRail, clampDelay } from "@/lib/rails";
+import { activeCardRails, activeSptRail, clampDelay, pendingCvcRecollectionRail } from "@/lib/rails";
 import { RailBadge, RailRow, RailSelect } from "./rail-badge";
 import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
-import { fetchOrderIntent } from "@/lib/crossmint-api";
+import { CvcRecollection } from "./cvc-recollection";
+import { apiErrorCode, fetchOrderIntent } from "@/lib/crossmint-api";
 
 // The encrypted-card rail returns no expiry. Hide those details after a fixed time.
 const FALLBACK_HIDE_MS = 5 * 60 * 1000;
@@ -132,6 +133,19 @@ export function RevealCardDetails({
       }
     } catch (err) {
       setError(orderIntent.orderIntentId, err instanceof Error ? err.message : "Failed to reveal credentials");
+      // The vaulted CVC aged out between the last read and this mint. Re-read so
+      // the rail shows pending_cvc_recollection and the CVC form takes over.
+      if (apiErrorCode(err) === CVC_RECOLLECTION_REQUIRED_CODE) {
+        setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: "encrypted-card" }));
+        setExpandedOrderIntentId(null);
+        if (onUpdated) {
+          try {
+            onUpdated(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId));
+          } catch (refreshErr) {
+            console.error("Could not refresh the allowance after the CVC refusal:", refreshErr);
+          }
+        }
+      }
     } finally {
       setRevealingOrderIntentId(null);
     }
@@ -205,7 +219,9 @@ export function RevealCardDetails({
       {orderIntents.map((orderIntent) => {
         const cardRails = activeCardRails(orderIntent);
         const spt = activeSptRail(orderIntent);
-        const options = [...cardRails, ...(spt ? [spt] : [])];
+        // A rail waiting for its CVC is listed so the user can fix it here, but it cannot mint yet.
+        const pendingCvc = pendingCvcRecollectionRail(orderIntent);
+        const options = [...cardRails, ...(pendingCvc ? [pendingCvc] : []), ...(spt ? [spt] : [])];
         if (options.length === 0) return null;
         const selectedRail = options.find((rail) => rail.rail === selectedRailByOrderIntentId[orderIntent.orderIntentId]);
         const credentials = credentialsByOrderIntentId[orderIntent.orderIntentId];
@@ -213,13 +229,14 @@ export function RevealCardDetails({
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
         const isEncrypted = selectedRail?.rail === "encrypted-card";
+        const needsCvc = isEncrypted && selectedRail?.status === "pending_cvc_recollection";
         const keyState = keyStateByOrderIntentId[orderIntent.orderIntentId] ?? DEFAULT_KEY_STATE;
         const needsMerchant = !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
         const exhausted = isExhausted(orderIntent);
         const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
         const missingPublicKey = isEncrypted && keyState.publicPem.trim() === "";
-        const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey;
+        const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey && !needsCvc;
         const isDecrypting = decryptingOrderIntentId === orderIntent.orderIntentId;
 
         return (
@@ -253,7 +270,15 @@ export function RevealCardDetails({
                   <button
                     type="button"
                     disabled={!canReveal || isRevealing}
-                    title={canReveal ? undefined : missingPublicKey ? "Paste or generate a public key first" : "Choose a rail first"}
+                    title={
+                      canReveal
+                        ? undefined
+                        : needsCvc
+                          ? "Enter the card's CVC again first"
+                          : missingPublicKey
+                            ? "Paste or generate a public key first"
+                            : "Choose a rail first"
+                    }
                     onClick={() => {
                       if (!selectedRail) return;
                       if (isEncrypted) {
@@ -295,7 +320,21 @@ export function RevealCardDetails({
               <p className="px-4 py-3 text-xs text-[#00150d]/60">Each credential reserves its amount. Create a new allowance to mint another.</p>
             )}
 
-            {isEncrypted && !exhausted && !credentials && (
+            {needsCvc && !exhausted && !credentials && (
+              <>
+                {error && revealingOrderIntentId === null && <p className="px-4 pt-3 text-xs text-red-600 break-words">{error}</p>}
+                <CvcRecollection
+                  orderIntent={orderIntent}
+                  jwt={getJwt()}
+                  onRecollected={(latest) => {
+                    setError(orderIntent.orderIntentId, "");
+                    onUpdated?.(latest);
+                  }}
+                />
+              </>
+            )}
+
+            {isEncrypted && !needsCvc && !exhausted && !credentials && (
               <div className="p-4 space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs font-medium text-[#00150d]/60">Your RSA public key (PEM, 2048-bit)</label>

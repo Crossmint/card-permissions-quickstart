@@ -85,7 +85,18 @@ async function traced<T>(run: () => Promise<T>): Promise<ActionResult<T>> {
     return { data, traces };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { data: { __error: message } as unknown as T, traces };
+    const code = err instanceof CrossmintApiError ? err.code : undefined;
+    return { data: { __error: message, __code: code } as unknown as T, traces };
+  }
+}
+
+/** A failed Crossmint call. `code` is the API's machine-readable error code when it sent one. */
+class CrossmintApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
   }
 }
 
@@ -173,14 +184,17 @@ async function crossmintFetch(method: HttpMethod, path: string, jwt: string, req
 
 /** Build an error that includes the API's message, so the UI can show why a call failed. */
 function apiError(label: string, outcome: FetchOutcome): Error {
-  const body = outcome.body as { message?: string | string[]; error?: string; _raw?: string } | undefined;
+  const body = outcome.body as { message?: string | string[]; error?: string; code?: string; _raw?: string } | undefined;
   const message = Array.isArray(body?.message) ? body.message.join("; ") : body?.message ?? body?.error ?? body?._raw;
   // Request identifiers help Crossmint trace a failed call.
   const ids = Object.entries(outcome.trace.responseHeaders)
     .filter(([name]) => name !== "content-type")
     .map(([name, value]) => `${name}=${value}`)
     .join(" ");
-  return new Error(`${label} (${outcome.status})${message ? `: ${message}` : ""}${ids ? ` [${ids}]` : ""}`);
+  return new CrossmintApiError(
+    `${label} (${outcome.status})${message ? `: ${message}` : ""}${ids ? ` [${ids}]` : ""}`,
+    typeof body?.code === "string" ? body.code : undefined,
+  );
 }
 
 // ─── Internal callers (run inside a trace scope) ────────────────────────────

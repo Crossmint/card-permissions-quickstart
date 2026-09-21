@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@crossmint/client-sdk-react-ui": "4.6.1",
+    "@crossmint/client-sdk-react-ui": "4.7.0",
     "@stytch/nextjs": "^22.0.5",
     "jose": "6.2.12",
     "lucide-react": "^1.8.0",
