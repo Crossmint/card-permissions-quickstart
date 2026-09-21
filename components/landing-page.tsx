@@ -13,7 +13,7 @@ const features = [
   {
     title: "Scoped Card Permissions",
     description:
-      "Set spending rules with per-transaction, daily, and monthly limits enforced at the network level. Each approved payment returns a new, secure card number.",
+      "Set an amount, an expiry, and an optional merchant, enforced at the network level. Each approved payment returns a new, secure card number, or an encrypted copy of the card for networks without agent support.",
     iconPath: "/gauge.svg",
   },
   {
