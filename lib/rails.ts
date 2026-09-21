@@ -43,6 +43,14 @@ export function activeCardRail(intent: OrderIntentResponse): AgenticTokenRail | 
   return activeCardRails(intent)[0];
 }
 
+/** Active encrypted-card rail, if it can return a card. */
+export function activeEncryptedCardRail(intent: OrderIntentResponse): EncryptedCardRail | undefined {
+  return (intent.rails ?? []).find(
+    (rail): rail is EncryptedCardRail =>
+      rail.rail === "encrypted-card" && rail.status === "active" && rail.credentialFormats.includes("card"),
+  );
+}
+
 /** Active Stripe Shared Payment Token rail, if it supports identifiers. */
 export function activeSptRail(intent: OrderIntentResponse): SptRail | undefined {
   return (intent.rails ?? []).find(

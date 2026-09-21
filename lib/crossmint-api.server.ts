@@ -279,7 +279,7 @@ export async function fetchOrderIntent(jwt: string, orderIntentId: string): Prom
  * Create an order intent (allowance) on a registered card.
  * The response lists the rails that can spend it. Network rails may come back
  * as pending_verification: the user then verifies with their bank. The
- * encrypted-card rail is always listed when entitled.
+ * encrypted-card rail is listed on the allowance and used if another rail fails to mint.
  */
 export async function createNewOrderIntent(
   jwt: string,

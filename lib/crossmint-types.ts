@@ -28,7 +28,7 @@ export type RailName = "agentic-token" | "encrypted-card" | "spt";
 // ─── Card registration ──────────────────────────────────────────────────────
 // One-time step per saved card. It provisions the agentic rails the card
 // supports, plus the Stripe Shared Payment Token rail when entitled. The
-// encrypted-card rail is always available on an active allowance.
+// encrypted-card rail is used on the allowance, including as fallback when another rail fails to mint.
 //   - "enabled": the rail can back a new order intent
 //   - "pending": provisioning has not finished, poll again
 //   - "error": provisioning failed, read error.code
@@ -58,7 +58,7 @@ export type OrderIntentRegistration = {
 // An order intent is a spending allowance on a saved card. It exposes one or
 // more rails, each an independent way to pay from the same allowance:
 //   - "agentic-token": Visa/Mastercard network rail, mints a one-time card number
-//   - "encrypted-card": always available on an active allowance, returns the card as a JWE you decrypt
+//   - "encrypted-card": fallback on an active allowance, returns the card as a JWE you decrypt
 //   - "spt": Stripe Shared Payment Token rail, returns a token identifier
 // Per-rail status:
 //   - "active": ready to mint credentials

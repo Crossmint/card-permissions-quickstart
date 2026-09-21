@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronsUpDown, CreditCard, Info, Loader2, Plus } from "lucide-react";
 import { DotsMenu } from "./dots-menu";
-import { RailBadge } from "./rail-badge";
+import { RailRow } from "./rail-badge";
 import type { OrderIntentRegistration, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { registerCard } from "@/lib/crossmint-api";
 import { RegistrationPendingError, waitForRegistration } from "@/lib/wait-for-registration";
@@ -25,7 +25,12 @@ function cardExpiry(card: PaymentMethodResponse) {
   return month && year ? `Exp. ${month}/${year.slice(-2)}` : null;
 }
 
-/** The rail a registered card pays through, with a one-line description. */
+/** Registration never lists encrypted-card; it is still a way to mint on an allowance. */
+function displayRails(registration: OrderIntentRegistration) {
+  return [...registration.rails, { rail: "encrypted-card" as const, status: "enabled" as const }];
+}
+
+/** The rails a registered card can use, with a one-line description. */
 function RailDetail({
   registration,
   checking,
@@ -37,66 +42,66 @@ function RailDetail({
   checkMessage: string;
   onCheckAgain: () => void;
 }) {
+  const rails = displayRails(registration);
   const enabled = registration.rails.filter((rail) => rail.status === "enabled");
   const pending = registration.rails.some((rail) => rail.status === "pending");
 
-  if (enabled.length > 0) {
-    return (
-      <div className="space-y-2">
-        <div className="flex flex-wrap gap-2">
-          {enabled.map((rail) => (
-            <RailBadge
-              key={`${rail.rail}-${rail.provider}`}
-              rail={rail.rail}
-              provider={rail.rail === "agentic-token" ? rail.provider : "stripe"}
-              status="enabled"
-            />
-          ))}
-          <RailBadge rail="encrypted-card" status="active" />
-        </div>
-        <p className="text-xs leading-5 text-[#00150d]/60">
-          {enabled.some((rail) => rail.rail === "agentic-token") &&
-            "One-time card numbers from the card network after the user verifies with their bank."}
-          {enabled.some((rail) => rail.rail === "agentic-token") && enabled.some((rail) => rail.rail === "spt") && " "}
-          {enabled.some((rail) => rail.rail === "spt") && "Stripe Shared Payment Token for Stripe merchants."}
-        </p>
-      </div>
-    );
-  }
-
-  if (pending) {
+  if (pending && enabled.length === 0) {
     // Nothing polls in the background. The user asks for a re-check.
     return (
-      <div className="flex items-center justify-between gap-3 rounded-md border border-[#E6C87A] bg-[#FFF8E1] pl-3 pr-2 py-2">
-        <div className="flex items-center gap-2 text-xs text-[#9A6700]">
-          {checking && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
-          <span>
-            {checking
-              ? "GET /payment-methods/{id}/order-intent-registration…"
-              : checkMessage || "Rail status is pending. The card networks have not finished enrolling this card. Step 02 stays locked until they do."}
-          </span>
+      <div className="space-y-2">
+        <RailRow rails={rails} />
+        <div className="flex items-center justify-between gap-3 rounded-md border border-[#E6C87A] bg-[#FFF8E1] pl-3 pr-2 py-2">
+          <div className="flex items-center gap-2 text-xs text-[#9A6700]">
+            {checking && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+            <span>
+              {checking
+                ? "GET /payment-methods/{id}/order-intent-registration…"
+                : checkMessage || "Rail status is pending. The card networks have not finished enrolling this card. Step 02 stays locked until they do."}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onCheckAgain}
+            disabled={checking}
+            className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          >
+            Check again
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onCheckAgain}
-          disabled={checking}
-          className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-        >
-          Check again
-        </button>
       </div>
     );
   }
 
   const code = registration.rails.find((rail) => rail.status === "error")?.error?.code;
+
   return (
     <div className="space-y-2">
-      <div>
-        <RailBadge rail="encrypted-card" status="active" code={code} />
-      </div>
+      <RailRow rails={rails} />
       <p className="text-xs leading-5 text-[#00150d]/60">
-        Always available: the saved card as a JWE, decrypted in your browser. No verification.
+        {enabled.some((rail) => rail.rail === "agentic-token") &&
+          "One-time card numbers from the card network after the user verifies with their bank. "}
+        {enabled.some((rail) => rail.rail === "spt") && "Stripe Shared Payment Token for Stripe merchants. "}
+        {enabled.length === 0 && code
+          ? `Network rails failed (${code}). `
+          : registration.rails
+              .filter((rail) => rail.status === "error")
+              .map((rail) => `${rail.rail} is unavailable (${rail.error?.code}). `)}
+        If a mint on those rails fails, the app reveals the saved card on encrypted-card.
       </p>
+      {pending && (
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={onCheckAgain}
+            disabled={checking}
+            className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          >
+            {checking && <Loader2 className="size-3.5 animate-spin" />}
+            Check again
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -104,29 +109,7 @@ function RailDetail({
 /** Badge shown next to each card in the dropdown. */
 function CardRailTag({ registration }: { registration: OrderIntentRegistration | null }) {
   if (!registration) return <span className="text-[11px] text-[#00150d]/40">Not registered</span>;
-  if (registration.rails.some((rail) => rail.status === "pending")) {
-    return (
-      <div className="flex items-center gap-1">
-        <span className="text-[11px] font-mono text-[#9A6700]">pending</span>
-        <RailBadge rail="encrypted-card" compact />
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-wrap justify-end gap-1">
-      {registration.rails
-        .filter((rail) => rail.status === "enabled")
-        .map((rail) => (
-          <RailBadge
-            key={`${rail.rail}-${rail.provider}`}
-            rail={rail.rail}
-            provider={rail.rail === "agentic-token" ? rail.provider : "stripe"}
-            compact
-          />
-        ))}
-      <RailBadge rail="encrypted-card" compact />
-    </div>
-  );
+  return <RailRow rails={displayRails(registration)} />;
 }
 
 export function SavedCardsList({
@@ -288,12 +271,14 @@ export function SavedCardsList({
                     onClick={() => { onSelectCard(card.paymentMethodId); setOpen(false); }}
                     className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#F6F6F6] transition-colors text-left"
                   >
-                    <CreditCard className="size-4 text-[#05B959] shrink-0" />
+                    <CreditCard className="size-4 text-[#05B959] shrink-0 self-start mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-[#00150d]">{cardTitle(card)}</div>
                       {exp && <div className="text-xs text-[#00150d]/50">{exp}</div>}
+                      <div className="mt-1.5">
+                        <CardRailTag registration={registrations[card.paymentMethodId] ?? null} />
+                      </div>
                     </div>
-                    <CardRailTag registration={registrations[card.paymentMethodId] ?? null} />
                     <span className="w-4 shrink-0">{isSelected && <Check className="size-4 text-[#05B959]" />}</span>
                   </button>
                 );

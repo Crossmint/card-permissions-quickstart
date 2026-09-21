@@ -192,9 +192,17 @@ export default function Page() {
   };
 
   const handleDeleteCard = async (paymentMethodId: string) => {
-    await removePaymentMethod(getJwt(), paymentMethodId);
+    const jwt = getJwt();
+    // Drop linked allowances from the list first so Verify cannot run on a card that is about to disappear.
+    setOrderIntents((current) => current.filter((intent) => intent.paymentMethodId !== paymentMethodId));
+    const linked = orderIntents.filter(
+      (intent) => intent.paymentMethodId === paymentMethodId && intent.status !== "cancelled",
+    );
+    await Promise.allSettled(linked.map((intent) => deleteOrderIntent(jwt, intent.orderIntentId)));
+    await removePaymentMethod(jwt, paymentMethodId);
     if (selectedCardId === paymentMethodId) setSelectedCardId(null);
-    fetchData();
+    if (issuingForCard === paymentMethodId) setIssuingForCard(null);
+    await fetchData();
   };
 
   const upsertOrderIntent = (orderIntent: OrderIntentResponse) => {
@@ -223,13 +231,16 @@ export default function Page() {
   };
 
   // A card backs allowances once its registration has settled: rails enabled,
-  // or all in error (the API then assigns encrypted-card). Pending does not count.
+  // or all in error (minting then falls back to encrypted-card). Pending does not count.
   const registeredCards = savedCards.filter((card) => isRegistrationSettled(registrations[card.paymentMethodId]));
   const hasRegisteredCard = registeredCards.length > 0;
   // The card picked in step 01 is the default for step 02, when it is registered.
   const selectedCard = savedCards.find((card) => card.paymentMethodId === selectedCardId) ?? savedCards[0];
   const defaultIssueCard = selectedCard && isRegistrationSettled(registrations[selectedCard.paymentMethodId]) ? selectedCard : registeredCards[0];
-  const visibleOrderIntents = orderIntents.filter((orderIntent) => orderIntent.status !== "cancelled");
+  const savedCardIds = new Set(savedCards.map((card) => card.paymentMethodId));
+  const visibleOrderIntents = orderIntents.filter(
+    (orderIntent) => orderIntent.status !== "cancelled" && savedCardIds.has(orderIntent.paymentMethodId),
+  );
   const usableOrderIntents = visibleOrderIntents.filter(isUsable);
   // Step 03 also lists exhausted allowances, so the user sees the balance reach zero.
   const revealableOrderIntents = visibleOrderIntents.filter(
@@ -411,7 +422,7 @@ export default function Page() {
             <StepHeader
               step="03"
               title="Reveal card details"
-              subtitle="Retrieve card details when your agent is ready to pay. Choose an active network, encrypted-card, or Stripe token rail."
+              subtitle="Choose a rail, then reveal card details. If minting it fails, the app reveals the saved card on encrypted-card."
             />
             <RevealCardDetails
               orderIntents={revealableOrderIntents}

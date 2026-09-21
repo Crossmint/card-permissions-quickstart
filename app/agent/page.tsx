@@ -114,7 +114,12 @@ export default function AgentDemoPage() {
     const load = async () => {
       try {
         const data = await fetchAllData(getJwt());
-        setOrderIntents(data.orderIntents);
+        const savedCardIds = new Set(data.cards.map((card) => card.paymentMethodId));
+        setOrderIntents(
+          data.orderIntents.filter(
+            (intent) => intent.status !== "cancelled" && savedCardIds.has(intent.paymentMethodId),
+          ),
+        );
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : "Failed to load agent context");
       } finally {

@@ -1,10 +1,12 @@
 // Client-side dispatcher: reveal credentials for an order intent through
 // whichever active rail is selected. Never log or persist the result.
+// If a network or Stripe mint fails and the allowance still has balance,
+// immediately retry on encrypted-card.
 
-import { fetchAgenticTokenCredentials, fetchEncryptedCardCredentials, fetchSptCredentials } from "@/lib/crossmint-api";
+import { fetchAgenticTokenCredentials, fetchEncryptedCardCredentials, fetchOrderIntent, fetchSptCredentials } from "@/lib/crossmint-api";
 import type { AgentCardCredentials, CardCredentialValue, Merchant, OrderIntentResponse, RailName, RevealedCredentials } from "@/lib/crossmint-types";
 import { decryptCardJwe, generateEphemeralRsaKeyPair } from "@/lib/encrypted-card";
-import { activeCardRail, activeCardRails, activeSptRail, railErrorCode } from "@/lib/rails";
+import { activeCardRail, activeCardRails, activeEncryptedCardRail, activeSptRail, availableAmount, railErrorCode } from "@/lib/rails";
 
 function normalize(
   rail: AgentCardCredentials["rail"],
@@ -33,6 +35,31 @@ function activeRail(orderIntent: OrderIntentResponse, requested?: RailName) {
   return activeCardRail(orderIntent) ?? spt;
 }
 
+async function revealEncryptedCard(jwt: string, orderIntentId: string): Promise<RevealedCredentials> {
+  const { publicJwk, privateKey } = await generateEphemeralRsaKeyPair();
+  const response = await fetchEncryptedCardCredentials(jwt, orderIntentId, publicJwk);
+  const card = await decryptCardJwe(response.credential.value, privateKey);
+  return normalize("encrypted-card", card);
+}
+
+async function latestIntent(jwt: string, orderIntent: OrderIntentResponse): Promise<OrderIntentResponse> {
+  try {
+    return await fetchOrderIntent(jwt, orderIntent.orderIntentId);
+  } catch {
+    return orderIntent;
+  }
+}
+
+async function fallbackEncryptedCard(
+  jwt: string,
+  orderIntent: OrderIntentResponse,
+  err: unknown,
+): Promise<RevealedCredentials> {
+  const latest = await latestIntent(jwt, orderIntent);
+  if (availableAmount(latest) <= 0 || !activeEncryptedCardRail(latest)) throw err;
+  return revealEncryptedCard(jwt, latest.orderIntentId);
+}
+
 export async function revealCardCredentials(
   jwt: string,
   orderIntent: OrderIntentResponse,
@@ -52,37 +79,44 @@ export async function revealCardCredentials(
   }
 
   if (rail.rail === "encrypted-card") {
-    const { publicJwk, privateKey } = await generateEphemeralRsaKeyPair();
-    const response = await fetchEncryptedCardCredentials(jwt, orderIntent.orderIntentId, publicJwk);
-    const card = await decryptCardJwe(response.credential.value, privateKey);
-    return normalize("encrypted-card", card);
+    return revealEncryptedCard(jwt, orderIntent.orderIntentId);
   }
 
   const merchant = orderIntent.merchant ? undefined : options.merchant;
   if (!orderIntent.merchant && !merchant) {
     throw new Error("This allowance has no merchant. Provide one to mint a card.");
   }
-  const amount = { value: options.amount ?? orderIntent.amount.available, currency: orderIntent.amount.currency };
   if (rail.rail === "spt") {
-    if (!options.networkBusinessProfile) {
+    const networkBusinessProfile = options.networkBusinessProfile;
+    if (!networkBusinessProfile) {
       throw new Error("Provide the Stripe Network Business Profile ID");
     }
-    const response = await fetchSptCredentials(jwt, orderIntent.orderIntentId, {
+    const amount = { value: options.amount ?? orderIntent.amount.available, currency: orderIntent.amount.currency };
+    try {
+      const response = await fetchSptCredentials(jwt, orderIntent.orderIntentId, {
+        amount,
+        merchant,
+        networkBusinessProfile,
+      });
+      return {
+        kind: "spt",
+        rail: "spt",
+        token: response.credential.value,
+        expiresAt: response.expiresAt,
+      };
+    } catch (err) {
+      return fallbackEncryptedCard(jwt, orderIntent, err);
+    }
+  }
+  const amount = { value: options.amount ?? orderIntent.amount.available, currency: orderIntent.amount.currency };
+  try {
+    const response = await fetchAgenticTokenCredentials(jwt, orderIntent.orderIntentId, {
+      provider: rail.provider,
       amount,
       merchant,
-      networkBusinessProfile: options.networkBusinessProfile,
     });
-    return {
-      kind: "spt",
-      rail: "spt",
-      token: response.credential.value,
-      expiresAt: response.expiresAt,
-    };
+    return normalize("agentic-token", response.credential.value, response.expiresAt);
+  } catch (err) {
+    return fallbackEncryptedCard(jwt, orderIntent, err);
   }
-  const response = await fetchAgenticTokenCredentials(jwt, orderIntent.orderIntentId, {
-    provider: rail.provider,
-    amount,
-    merchant,
-  });
-  return normalize("agentic-token", response.credential.value, response.expiresAt);
 }

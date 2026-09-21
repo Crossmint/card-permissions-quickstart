@@ -8,7 +8,7 @@ import { availableAmount, isUsable, needsVerification, pendingAgenticRail, railE
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
-import { RailBadge } from "./rail-badge";
+import { RailRow } from "./rail-badge";
 
 // Backoff between re-reads after a successful bank verification: about 6 s total.
 const CONFIRM_DELAYS_MS = [1000, 1500, 2000, 1500];
@@ -43,34 +43,23 @@ function expiryLabel(orderIntent: OrderIntentResponse) {
   return `Expires ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
 
-function StatusPill({ orderIntent }: { orderIntent: OrderIntentResponse }) {
+function StatusAside({ orderIntent }: { orderIntent: OrderIntentResponse }) {
   if (orderIntent.status !== "active") {
-    return <span className="text-xs text-[#00150d]/40 capitalize">{orderIntent.status}</span>;
+    return <span className="shrink-0 text-xs text-[#00150d]/40 capitalize">{orderIntent.status}</span>;
   }
   if (isExhausted(orderIntent)) return <ExhaustedPill orderIntent={orderIntent} />;
-  const rails = orderIntent.rails;
-  if (rails.some((rail) => rail.status !== "error")) {
-    return (
-      <div className="flex flex-wrap justify-end gap-1.5">
-        {rails.map((rail) => (
-          <RailBadge
-            key={`${rail.rail}-${rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : "default"}`}
-            rail={rail.rail}
-            provider={rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : undefined}
-            status={rail.status}
-            code={rail.status === "error" ? rail.error?.code : undefined}
-          />
-        ))}
-      </div>
-    );
-  }
+  if (orderIntent.rails.some((rail) => rail.status !== "error")) return null;
   const code = railErrorCode(orderIntent);
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-[#B42318]" title={code}>
+    <span className="inline-flex shrink-0 items-center gap-1 text-xs text-[#B42318]" title={code}>
       <AlertTriangle className="size-3 shrink-0" />
       Unavailable{code ? ` (${code})` : ""}
     </span>
   );
+}
+
+function showRails(orderIntent: OrderIntentResponse) {
+  return orderIntent.status === "active" && orderIntent.rails.some((rail) => rail.status !== "error");
 }
 
 function OrderIntentItem({
@@ -165,13 +154,12 @@ function OrderIntentItem({
               {expiry ? ` · ${expiry}` : ""}
             </div>
           </div>
-          <StatusPill orderIntent={orderIntent} />
           {pending && /pending_verification/.test(error) && (
             <button
               type="button"
               onClick={() => void checkAgain()}
               disabled={verifying || confirming}
-              className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] border border-[rgba(0,0,0,0.15)] text-[#00150d] hover:bg-black/[0.03] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap text-xs font-medium px-3 py-1.5 rounded-[4px] border border-[rgba(0,0,0,0.15)] text-[#00150d] hover:bg-black/[0.03] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
               Check again
             </button>
@@ -181,16 +169,22 @@ function OrderIntentItem({
               type="button"
               onClick={() => { setError(""); setVerifying(true); }}
               disabled={verifying || confirming}
-              className="inline-flex items-center gap-1.5 shrink-0 text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
               {verifying || confirming ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
               {error ? "Try again" : "Verify"}
             </button>
           )}
+          <StatusAside orderIntent={orderIntent} />
           {cancelling
             ? <Loader2 className="size-3.5 animate-spin text-[#00150d]/40" />
             : <DotsMenu onDelete={handleCancel} deleteLabel="Cancel allowance" />}
         </div>
+        {showRails(orderIntent) && (
+          <div className="mt-2 pl-8">
+            <RailRow rails={orderIntent.rails} muted={isExhausted(orderIntent)} />
+          </div>
+        )}
 
         {pending && (
           <p className={`mt-2 text-xs leading-4 ${error ? "text-[#B42318]" : "text-[#9A6700]"}`}>

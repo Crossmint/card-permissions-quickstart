@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { CreditCard, Eye, EyeOff, Loader2, LockKeyhole } from "lucide-react";
 import type { Merchant, OrderIntentResponse, RailName, RevealedCredentials } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
-import { activeCardRail, activeCardRails, activeSptRail, clampDelay } from "@/lib/rails";
-import { RailBadge } from "./rail-badge";
+import { activeCardRails, activeSptRail, clampDelay } from "@/lib/rails";
+import { RailBadge, RailRow, RailSelect } from "./rail-badge";
 import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
 
@@ -125,97 +125,82 @@ export function RevealCardDetails({
         const spt = activeSptRail(orderIntent);
         const options = [...cardRails, ...(spt ? [spt] : [])];
         if (options.length === 0) return null;
-        const preferred = activeCardRail(orderIntent)?.rail ?? "spt";
-        const selectedRail =
-          options.find((rail) => rail.rail === selectedRailByOrderIntentId[orderIntent.orderIntentId]) ??
-          options.find((rail) => rail.rail === preferred) ??
-          options[0];
+        const selectedRail = options.find((rail) => rail.rail === selectedRailByOrderIntentId[orderIntent.orderIntentId]);
         const credentials = credentialsByOrderIntentId[orderIntent.orderIntentId];
         const deliveredRail = credentials && options.find((rail) => rail.rail === credentials.rail);
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
-        const isEncrypted = selectedRail.rail === "encrypted-card";
+        const isEncrypted = selectedRail?.rail === "encrypted-card";
         const needsMerchant = !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
         const exhausted = isExhausted(orderIntent);
         const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
+        const canReveal = Boolean(selectedRail) && !exhausted;
 
         return (
           <div
             key={orderIntent.orderIntentId}
-            className="rounded-lg border border-[rgba(0,0,0,0.08)] overflow-hidden"
+            // No overflow-hidden: the rail menu opens past this border.
+            className="rounded-lg border border-[rgba(0,0,0,0.08)]"
           >
-            <div className="flex items-center gap-3 bg-[#F6F6F6] px-4 py-3">
-              <CreditCard className="size-5 text-[#2377FF] shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-[#00150d] truncate">{orderIntent.description || "Agent card allowance"}</div>
-                <div className="text-xs text-[#00150d]/50">
-                  {allowanceLimit(orderIntent)}
-                  {orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
+            <div className="bg-[#F6F6F6] px-4 py-3 rounded-t-[7px]">
+              <div className="flex items-center gap-3">
+                <CreditCard className="size-5 text-[#2377FF] shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-[#00150d] truncate">{orderIntent.description || "Agent card allowance"}</div>
+                  <div className="text-xs text-[#00150d]/50">
+                    {allowanceLimit(orderIntent)}
+                    {orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
+                  </div>
                 </div>
+                {exhausted && !credentials ? (
+                  <ExhaustedPill orderIntent={orderIntent} />
+                ) : credentials ? (
+                  <button
+                    type="button"
+                    onClick={() => hideDetails(orderIntent.orderIntentId)}
+                    className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs font-medium text-[#00150d]/60 hover:text-[#00150d]"
+                  >
+                    <EyeOff className="size-3.5" />
+                    Hide details
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!canReveal || isRevealing}
+                    title={canReveal ? undefined : "Choose a rail first"}
+                    onClick={() => {
+                      if (!selectedRail) return;
+                      if (isEncrypted) {
+                        void revealDetails(orderIntent, { rail: selectedRail.rail });
+                        return;
+                      }
+                      setExpandedOrderIntentId(isExpanded ? null : orderIntent.orderIntentId);
+                      setAmount(orderIntent.amount.available);
+                      setError(orderIntent.orderIntentId, "");
+                    }}
+                    className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs font-medium text-[#05B959] hover:text-[#049d4c] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
+                    Reveal details
+                  </button>
+                )}
               </div>
-              {options.length > 1 && (
-                <div className="flex items-center gap-1">
-                  {options.map((rail) => (
-                    <button
-                      key={rail.rail}
-                      type="button"
-                      onClick={() => setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: rail.rail }))}
-                      aria-pressed={selectedRail.rail === rail.rail}
-                    >
-                      <RailBadge
-                        rail={rail.rail}
-                        provider={rail.rail === "agentic-token" ? rail.provider : rail.rail === "spt" ? "stripe" : undefined}
-                        compact
-                        preferred={selectedRail.rail === rail.rail}
-                      />
-                    </button>
-                  ))}
-                </div>
-              )}
-              {exhausted && !credentials ? (
-                <ExhaustedPill orderIntent={orderIntent} />
-              ) : (
-                <RailBadge
-                  rail={selectedRail.rail}
-                  provider={selectedRail.rail === "agentic-token" ? selectedRail.provider : selectedRail.rail === "spt" ? "stripe" : undefined}
-                  compact
-                />
-              )}
-              {exhausted && !credentials ? null : credentials ? (
-                <button
-                  type="button"
-                  onClick={() => hideDetails(orderIntent.orderIntentId)}
-                  className="flex items-center gap-1.5 text-xs font-medium text-[#00150d]/60 hover:text-[#00150d]"
-                >
-                  <EyeOff className="size-3.5" />
-                  Hide details
-                </button>
-              ) : isEncrypted ? (
-                // Encrypted-card needs no input: generate a keypair, fetch, decrypt.
-                <button
-                  type="button"
-                  disabled={isRevealing}
-                  onClick={() => void revealDetails(orderIntent, { rail: selectedRail.rail })}
-                  className="flex items-center gap-1.5 text-xs font-medium text-[#05B959] hover:text-[#049d4c] disabled:opacity-60"
-                >
-                  {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
-                  Reveal details
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExpandedOrderIntentId(isExpanded ? null : orderIntent.orderIntentId);
-                    setAmount(orderIntent.amount.available);
-                    setError(orderIntent.orderIntentId, "");
-                  }}
-                  className="flex items-center gap-1.5 text-xs font-medium text-[#05B959] hover:text-[#049d4c]"
-                >
-                  <Eye className="size-3.5" />
-                  Reveal details
-                </button>
-              )}
+              <div className="mt-2 pl-8">
+                {exhausted && !credentials ? (
+                  <RailRow rails={options} muted />
+                ) : (
+                  <RailSelect
+                    rails={options}
+                    selected={selectedRail?.rail}
+                    onSelect={(rail) => {
+                      setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: rail }));
+                      if (rail === "encrypted-card") setExpandedOrderIntentId((current) => (current === orderIntent.orderIntentId ? null : current));
+                      setError(orderIntent.orderIntentId, "");
+                    }}
+                  />
+                )}
+              </div>
             </div>
 
             {exhausted && !credentials && (
@@ -226,7 +211,7 @@ export function RevealCardDetails({
               <p className="px-4 py-3 text-xs text-red-600 break-words">{error}</p>
             )}
 
-            {isExpanded && !credentials && !isEncrypted && (
+            {isExpanded && selectedRail && !credentials && !isEncrypted && (
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -329,6 +314,9 @@ export function RevealCardDetails({
                     }
                     compact
                   />
+                  {credentials.rail === "encrypted-card" && selectedRail && selectedRail.rail !== "encrypted-card" && (
+                    <span>after {selectedRail.rail} failed</span>
+                  )}
                 </div>
                 {credentials.kind === "spt" ? (
                   <>

@@ -104,7 +104,7 @@ function intentFacts(intent: OrderIntentResponse | undefined, rails: RailFact[])
     facts.push("spt is pending_verification. Stripe must finish verification before the agent can use it.");
   }
   if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "active")) {
-    facts.push("encrypted-card is active with no verification. Always available on an active allowance.");
+    facts.push("encrypted-card is the fallback if another rail fails to mint.");
   }
   if (rails.length > 0 && rails.every((rail) => rail.status === "error")) {
     facts.push("No usable rail. This allowance cannot mint a card.");
@@ -136,7 +136,7 @@ function explainCall(trace: ApiTrace): Explained {
     if (trace.method === "PUT") {
       const facts: string[] = [];
       if (rails.length > 0 && rails.every((rail) => rail.status === "error")) {
-        facts.push("No network rail could be enabled. Allowances on this card work through encrypted-card only.");
+        facts.push("No network rail could be enabled. Allowances on this card still mint through encrypted-card.");
       } else if (rails.some((rail) => rail.status === "pending")) {
         facts.push("Enrollment is in progress. The app polls until it settles.");
       }
@@ -165,7 +165,12 @@ function explainCall(trace: ApiTrace): Explained {
         step,
         important: true,
         title: "Fetch the saved card on the encrypted-card rail, encrypted to a one-time key from the browser",
-        facts: trace.ok ? ["Credential issued by encrypted-card as a JWE. The browser decrypts it. The server never sees the number."] : [],
+        facts: trace.ok
+          ? [
+              "Credential issued by encrypted-card as a JWE. The browser decrypts it. The server never sees the number.",
+              "Used when this rail is selected, or as fallback after another rail failed to mint.",
+            ]
+          : [],
         rails,
         error,
       };
