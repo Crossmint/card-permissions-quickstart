@@ -184,7 +184,7 @@ export function RevealCardDetails({
     setError(orderIntent.orderIntentId, "");
     try {
       await expireCardCvc(getJwt(), orderIntent.paymentMethodId);
-      onUpdated?.(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId, "cvc-expired"));
+      await refreshAllowance(orderIntent.orderIntentId, "cvc-expired");
     } catch (err) {
       setError(orderIntent.orderIntentId, err instanceof Error ? err.message : "Could not expire the CVC");
     } finally {
