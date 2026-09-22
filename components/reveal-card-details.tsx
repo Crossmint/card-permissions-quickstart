@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole } from "lucide-react";
 import { type Merchant, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { decryptCardJwe, generateRsaKeyPairPem, importRsaPrivateKeyPem, importRsaPublicKeyPem } from "@/lib/encrypted-card";
@@ -432,15 +432,7 @@ export function RevealCardDetails({
                   </label>
                 </fieldset>
 
-                {encryptionMode === "generated" ? (
-                  <div className="flex items-start gap-2.5 rounded-lg bg-[#F6F6F6] px-3 py-2.5">
-                    <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[#05B959]" />
-                    <div>
-                      <p className="text-xs font-medium text-[#00150d]">Ready for secure reveal</p>
-                      <p className="mt-0.5 text-[11px] leading-4 text-[#00150d]/55">A temporary RSA keypair will be generated in this browser when you reveal the card.</p>
-                    </div>
-                  </div>
-                ) : (
+                {encryptionMode === "custom" && (
                   <div className="space-y-2">
                     <label className="block text-xs font-medium text-[#00150d]/60">Public key (PEM, RSA 2048-bit)</label>
                     <textarea
