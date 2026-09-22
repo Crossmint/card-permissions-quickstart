@@ -5,6 +5,9 @@
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
+/** Why the app made a call, when the path alone does not say. Set client-side. */
+export type TraceContext = "cvc-recollected" | "rail-selected";
+
 export type ApiTrace = {
   id: string;
   /** ISO timestamp taken when the request started. */
@@ -21,6 +24,7 @@ export type ApiTrace = {
   durationMs: number;
   responseHeaders: Record<string, string>;
   responseBody?: unknown;
+  context?: TraceContext;
 };
 
 // ─── Redaction ──────────────────────────────────────────────────────────────

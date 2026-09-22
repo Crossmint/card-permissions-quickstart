@@ -13,7 +13,7 @@ export type RailFact = {
   rail: RailName;
   provider?: RailProvider | "stripe";
   /** Registration or intent status, normalized to what the badge shows. */
-  status: "enabled" | "active" | "pending" | "pending_verification" | "error";
+  status: "enabled" | "active" | "pending" | "pending_verification" | "pending_cvc_recollection" | "error";
   code?: string;
   /** The rail the app will use to mint a card, when more than one is present. */
   preferred?: boolean;
@@ -106,6 +106,9 @@ function intentFacts(intent: OrderIntentResponse | undefined, rails: RailFact[])
   if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "active")) {
     facts.push("encrypted-card is the fallback if another rail fails to mint.");
   }
+  if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection")) {
+    facts.push("encrypted-card is pending_cvc_recollection: the saved CVC aged out. The user re-enters it with CrossmintCvcRecollection; the app never sees it.");
+  }
   if (rails.length > 0 && rails.every((rail) => rail.status === "error")) {
     facts.push("No usable rail. This allowance cannot mint a card.");
   }
@@ -160,7 +163,8 @@ function explainCall(trace: ApiTrace): Explained {
     const railName: RailName = req?.rail === "encrypted-card" || req?.rail === "spt" ? req.rail : "agentic-token";
     const provider = req?.provider as RailProvider | undefined;
     if (railName === "encrypted-card") {
-      const rails: RailFact[] = [{ rail: "encrypted-card", status: trace.ok ? "active" : "error" }];
+      const cvcRequired = res?.code === "ORDER_INTENT_CVC_RECOLLECTION_REQUIRED";
+      const rails: RailFact[] = [{ rail: "encrypted-card", status: trace.ok ? "active" : cvcRequired ? "pending_cvc_recollection" : "error" }];
       return {
         step,
         important: true,
@@ -171,7 +175,9 @@ function explainCall(trace: ApiTrace): Explained {
               "When you select this rail, the app sends your public key and shows the JWE. Decrypt it with your private key in the app.",
               "As fallback after another rail failed to mint, the app uses a one-time key and decrypts the JWE here.",
             ]
-          : [],
+          : cvcRequired
+            ? ["409 ORDER_INTENT_CVC_RECOLLECTION_REQUIRED: the saved CVC aged out. Re-enter it with CrossmintCvcRecollection, then retry this call."]
+            : [],
         rails,
         error,
       };
@@ -226,6 +232,29 @@ function explainCall(trace: ApiTrace): Explained {
   }
   const intent = trace.ok ? (res as unknown as OrderIntentResponse) : undefined;
   const rails = intentRails(intent);
+  if (trace.context === "cvc-recollected") {
+    const stillPending = rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection");
+    return {
+      step: 3,
+      important: true,
+      title: stillPending
+        ? "Re-read the allowance after CVC recollection. The rail is still pending; the vault write may not have landed yet."
+        : "Re-read the allowance after CVC recollection. The encrypted-card rail is active again.",
+      facts: intentFacts(intent, rails),
+      rails,
+      error,
+    };
+  }
+  if (trace.context === "rail-selected") {
+    return {
+      step: 3,
+      important: rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection"),
+      title: "Re-read the allowance before minting. Rail status is a snapshot: the CVC can age out while the page is open.",
+      facts: intentFacts(intent, rails),
+      rails,
+      error,
+    };
+  }
   const reserved = Number(intent?.amount?.reserved ?? 0);
   const spent = Number(intent?.amount?.spent ?? 0);
   if (intent && (reserved > 0 || spent > 0)) {
@@ -236,6 +265,9 @@ function explainCall(trace: ApiTrace): Explained {
       `${intent.amount.available} of ${intent.amount.total} ${unit} left.`,
     ].filter(Boolean);
     return { step, important: true, title: "Re-read the allowance after minting. The balance goes down.", facts, rails, error };
+  }
+  if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection")) {
+    return { step, important: true, title: "Re-read the allowance. The encrypted-card rail is waiting for the card's CVC.", facts: intentFacts(intent, rails), rails, error };
   }
   return { step, important: false, title: "Re-read the allowance. Rail status and balance come live from the provider.", facts: intentFacts(intent, rails), rails, error };
 }

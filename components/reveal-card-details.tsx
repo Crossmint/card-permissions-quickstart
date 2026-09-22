@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole } from "lucide-react";
-import type { Merchant, OrderIntentResponse, RailName, RevealedCredentials, RsaPublicJwk } from "@/lib/crossmint-types";
+import { type Merchant, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { decryptCardJwe, generateRsaKeyPairPem, importRsaPrivateKeyPem, importRsaPublicKeyPem } from "@/lib/encrypted-card";
 import { errors as joseErrors } from "jose";
-import { activeCardRails, activeSptRail, clampDelay } from "@/lib/rails";
+import { activeCardRails, activeSptRail, clampDelay, pendingCvcRecollectionRail } from "@/lib/rails";
 import { RailBadge, RailRow, RailSelect } from "./rail-badge";
 import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
+import { CvcRecollection } from "./cvc-recollection";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
+import type { TraceContext } from "@/lib/api-trace";
+import { describeMintFailure } from "@/lib/mint-failure";
 
 // The encrypted-card rail returns no expiry. Hide those details after a fixed time.
 const FALLBACK_HIDE_MS = 5 * 60 * 1000;
@@ -80,6 +83,20 @@ export function RevealCardDetails({
   const [errorByOrderIntentId, setErrorByOrderIntentId] = useState<Record<string, string>>({});
   const [keyStateByOrderIntentId, setKeyStateByOrderIntentId] = useState<Record<string, KeyState>>({});
   const [decryptingOrderIntentId, setDecryptingOrderIntentId] = useState<string | null>(null);
+  // Allowances whose last mint was refused with ORDER_INTENT_CVC_RECOLLECTION_REQUIRED.
+  const [cvcRefusedOrderIntentIds, setCvcRefusedOrderIntentIds] = useState<ReadonlySet<string>>(new Set());
+  // Re-reads of one allowance can overlap (rail selected, then Reveal). Only the
+  // most recently started read may update the parent, so an older snapshot cannot
+  // overwrite a newer one.
+  const readSeqByOrderIntentId = useRef<Record<string, number>>({});
+
+  const refreshAllowance = async (orderIntentId: string, context?: TraceContext) => {
+    if (!onUpdated) return;
+    const seq = (readSeqByOrderIntentId.current[orderIntentId] ?? 0) + 1;
+    readSeqByOrderIntentId.current[orderIntentId] = seq;
+    const latest = await fetchOrderIntent(getJwt(), orderIntentId, context);
+    if (readSeqByOrderIntentId.current[orderIntentId] === seq) onUpdated(latest);
+  };
 
   const updateKeyState = (orderIntentId: string, patch: Partial<KeyState>) =>
     setKeyStateByOrderIntentId((current) => ({
@@ -123,17 +140,37 @@ export function RevealCardDetails({
       setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
       setExpandedOrderIntentId(null);
       // Minting reserves the amount. Re-read so the balance shown goes down.
-      if (onUpdated) {
-        try {
-          onUpdated(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId));
-        } catch (err) {
-          console.error("Could not refresh the allowance after minting:", err);
-        }
+      try {
+        await refreshAllowance(orderIntent.orderIntentId);
+      } catch (err) {
+        console.error("Could not refresh the allowance after minting:", err);
       }
     } catch (err) {
-      setError(orderIntent.orderIntentId, err instanceof Error ? err.message : "Failed to reveal credentials");
+      const failure = describeMintFailure(err);
+      setError(orderIntent.orderIntentId, failure.message);
+      // The 409 alone opens the CVC form; the re-read only syncs the rail badge.
+      if (failure.cvcRecollectionRequired) {
+        setCvcRefusedOrderIntentIds((current) => new Set(current).add(orderIntent.orderIntentId));
+        setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: "encrypted-card" }));
+        setExpandedOrderIntentId(null);
+        try {
+          await refreshAllowance(orderIntent.orderIntentId);
+        } catch (refreshErr) {
+          console.error("Could not refresh the allowance after the CVC refusal:", refreshErr);
+        }
+      }
     } finally {
       setRevealingOrderIntentId(null);
+    }
+  };
+
+  // Rail status is a read-time snapshot: the vaulted CVC can age out while the
+  // page is open. Re-read before the user generates a key and clicks Reveal.
+  const refreshBeforeMint = async (orderIntentId: string) => {
+    try {
+      await refreshAllowance(orderIntentId, "rail-selected");
+    } catch (err) {
+      console.error("Could not refresh the allowance before minting:", err);
     }
   };
 
@@ -205,7 +242,9 @@ export function RevealCardDetails({
       {orderIntents.map((orderIntent) => {
         const cardRails = activeCardRails(orderIntent);
         const spt = activeSptRail(orderIntent);
-        const options = [...cardRails, ...(spt ? [spt] : [])];
+        // A rail waiting for its CVC is listed so the user can fix it here, but it cannot mint yet.
+        const pendingCvc = pendingCvcRecollectionRail(orderIntent);
+        const options = [...cardRails, ...(pendingCvc ? [pendingCvc] : []), ...(spt ? [spt] : [])];
         if (options.length === 0) return null;
         const selectedRail = options.find((rail) => rail.rail === selectedRailByOrderIntentId[orderIntent.orderIntentId]);
         const credentials = credentialsByOrderIntentId[orderIntent.orderIntentId];
@@ -213,13 +252,16 @@ export function RevealCardDetails({
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
         const isEncrypted = selectedRail?.rail === "encrypted-card";
+        const needsCvc =
+          isEncrypted &&
+          (selectedRail?.status === "pending_cvc_recollection" || cvcRefusedOrderIntentIds.has(orderIntent.orderIntentId));
         const keyState = keyStateByOrderIntentId[orderIntent.orderIntentId] ?? DEFAULT_KEY_STATE;
         const needsMerchant = !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
         const exhausted = isExhausted(orderIntent);
         const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
         const missingPublicKey = isEncrypted && keyState.publicPem.trim() === "";
-        const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey;
+        const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey && !needsCvc;
         const isDecrypting = decryptingOrderIntentId === orderIntent.orderIntentId;
 
         return (
@@ -253,7 +295,15 @@ export function RevealCardDetails({
                   <button
                     type="button"
                     disabled={!canReveal || isRevealing}
-                    title={canReveal ? undefined : missingPublicKey ? "Paste or generate a public key first" : "Choose a rail first"}
+                    title={
+                      canReveal
+                        ? undefined
+                        : needsCvc
+                          ? "Enter the card's CVC again first"
+                          : missingPublicKey
+                            ? "Paste or generate a public key first"
+                            : "Choose a rail first"
+                    }
                     onClick={() => {
                       if (!selectedRail) return;
                       if (isEncrypted) {
@@ -283,7 +333,10 @@ export function RevealCardDetails({
                     selected={selectedRail?.rail}
                     onSelect={(rail) => {
                       setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: rail }));
-                      if (rail === "encrypted-card") setExpandedOrderIntentId((current) => (current === orderIntent.orderIntentId ? null : current));
+                      if (rail === "encrypted-card") {
+                        setExpandedOrderIntentId((current) => (current === orderIntent.orderIntentId ? null : current));
+                        void refreshBeforeMint(orderIntent.orderIntentId);
+                      }
                       setError(orderIntent.orderIntentId, "");
                     }}
                   />
@@ -295,7 +348,30 @@ export function RevealCardDetails({
               <p className="px-4 py-3 text-xs text-[#00150d]/60">Each credential reserves its amount. Create a new allowance to mint another.</p>
             )}
 
-            {isEncrypted && !exhausted && !credentials && (
+            {needsCvc && !exhausted && !credentials && (
+              <>
+                {error && revealingOrderIntentId === null && <p className="px-4 pt-3 text-xs text-red-600 break-words">{error}</p>}
+                <CvcRecollection
+                  afterRefusedMint={cvcRefusedOrderIntentIds.has(orderIntent.orderIntentId)}
+                  orderIntent={orderIntent}
+                  jwt={getJwt()}
+                  onRecollected={(latest) => {
+                    setError(orderIntent.orderIntentId, "");
+                    setCvcRefusedOrderIntentIds((current) => {
+                      const next = new Set(current);
+                      next.delete(orderIntent.orderIntentId);
+                      return next;
+                    });
+                    // Newest snapshot: an older in-flight read must not overwrite it.
+                    readSeqByOrderIntentId.current[orderIntent.orderIntentId] =
+                      (readSeqByOrderIntentId.current[orderIntent.orderIntentId] ?? 0) + 1;
+                    onUpdated?.(latest);
+                  }}
+                />
+              </>
+            )}
+
+            {isEncrypted && !needsCvc && !exhausted && !credentials && (
               <div className="p-4 space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs font-medium text-[#00150d]/60">Your RSA public key (PEM, 2048-bit)</label>

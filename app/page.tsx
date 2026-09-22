@@ -7,7 +7,7 @@ import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
-import { activeCardRail, activeSptRail, isRegistrationSettled, isUsable } from "@/lib/rails";
+import { activeCardRail, activeSptRail, isRegistrationSettled, isUsable, pendingCvcRecollectionRail } from "@/lib/rails";
 import { IS_PRODUCTION } from "@/lib/crossmint-env";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
@@ -242,9 +242,12 @@ export default function Page() {
     (orderIntent) => orderIntent.status !== "cancelled" && savedCardIds.has(orderIntent.paymentMethodId),
   );
   const usableOrderIntents = visibleOrderIntents.filter(isUsable);
-  // Step 03 also lists exhausted allowances, so the user sees the balance reach zero.
+  // Step 03 also lists exhausted allowances, so the user sees the balance reach zero,
+  // and allowances whose encrypted-card rail waits for its CVC, so the user can re-enter it there.
   const revealableOrderIntents = visibleOrderIntents.filter(
-    (intent) => intent.status === "active" && (activeCardRail(intent) !== undefined || activeSptRail(intent) !== undefined),
+    (intent) =>
+      intent.status === "active" &&
+      (activeCardRail(intent) !== undefined || activeSptRail(intent) !== undefined || pendingCvcRecollectionRail(intent) !== undefined),
   );
 
   // One step is shown at a time. A step unlocks when the previous one has

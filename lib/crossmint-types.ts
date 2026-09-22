@@ -63,10 +63,12 @@ export type OrderIntentRegistration = {
 // Per-rail status:
 //   - "active": ready to mint credentials
 //   - "pending_verification": the user must verify with their bank
+//   - "pending_cvc_recollection": encrypted-card only. The vaulted CVC has aged out;
+//     the user re-enters it through CrossmintCvcRecollection before this rail can mint
 //   - "error": this rail cannot be used, read error.code
 
 export type OrderIntentStatus = "active" | "cancelled" | "expired";
-export type OrderIntentRailStatus = "active" | "pending_verification" | "error";
+export type OrderIntentRailStatus = "active" | "pending_verification" | "pending_cvc_recollection" | "error";
 
 // Same discriminated shape as the SDK's OrderIntentRail: `error` exists only on errored rails.
 type OrderIntentRailState =
@@ -79,10 +81,11 @@ export type AgenticTokenRail = OrderIntentRailState & {
   credentialFormats: CredentialFormat[];
 };
 
-export type EncryptedCardRail = {
+export type EncryptedCardRail = (
+  | { status: "active" | "pending_cvc_recollection"; error?: never }
+  | { status: "error"; error: { code: string } }
+) & {
   rail: "encrypted-card";
-  status: "active";
-  error?: never;
   credentialFormats: "card"[];
 };
 
@@ -164,6 +167,9 @@ export type SptCredentialInput = {
   merchant?: Merchant;
   networkBusinessProfile: string;
 };
+
+// 409 `code` on POST /credentials for encrypted-card when the CVC clock has elapsed.
+export const CVC_RECOLLECTION_REQUIRED_CODE = "ORDER_INTENT_CVC_RECOLLECTION_REQUIRED";
 
 export type EncryptedCardCredentialResponse = {
   rail: "encrypted-card";

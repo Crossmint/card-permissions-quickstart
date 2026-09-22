@@ -66,6 +66,13 @@ export function pendingAgenticRail(intent: OrderIntentResponse): AgenticTokenRai
   );
 }
 
+/** The encrypted-card rail whose vaulted CVC must be re-entered before it can mint, if any. */
+export function pendingCvcRecollectionRail(intent: OrderIntentResponse): EncryptedCardRail | undefined {
+  return (intent.rails ?? []).find(
+    (rail): rail is EncryptedCardRail => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection",
+  );
+}
+
 /** Rails that still need verification, if any. */
 export function pendingVerificationRails(intent: OrderIntentResponse): (AgenticTokenRail | SptRail)[] {
   return (intent.rails ?? []).filter(

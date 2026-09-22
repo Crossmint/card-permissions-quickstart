@@ -8,10 +8,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@crossmint/client-sdk-react-ui": "4.6.1",
+    "@crossmint/client-sdk-react-ui": "4.7.0",
     "@stytch/nextjs": "^22.0.5",
     "jose": "6.2.12",
     "lucide-react": "^1.8.0",
@@ -29,6 +30,7 @@
     "eslint-config-next": "16.1.7",
     "postcss": "^8",
     "tailwindcss": "^4.2.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "4.1.11"
   }
 }

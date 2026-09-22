@@ -3,10 +3,19 @@
 // If a network or Stripe mint fails and the allowance still has balance,
 // immediately retry on encrypted-card.
 
-import { fetchAgenticTokenCredentials, fetchEncryptedCardCredentials, fetchOrderIntent, fetchSptCredentials } from "@/lib/crossmint-api";
-import type { AgentCardCredentials, CardCredentialValue, Merchant, OrderIntentResponse, RailName, RevealedCredentials, RsaPublicJwk } from "@/lib/crossmint-types";
+import { CrossmintApiError, fetchAgenticTokenCredentials, fetchEncryptedCardCredentials, fetchOrderIntent, fetchSptCredentials } from "@/lib/crossmint-api";
+import {
+  CVC_RECOLLECTION_REQUIRED_CODE,
+  type AgentCardCredentials,
+  type CardCredentialValue,
+  type Merchant,
+  type OrderIntentResponse,
+  type RailName,
+  type RevealedCredentials,
+  type RsaPublicJwk,
+} from "@/lib/crossmint-types";
 import { decryptCardJwe, generateEphemeralRsaKeyPair } from "@/lib/encrypted-card";
-import { activeCardRail, activeCardRails, activeEncryptedCardRail, activeSptRail, availableAmount, railErrorCode } from "@/lib/rails";
+import { activeCardRail, activeCardRails, activeEncryptedCardRail, activeSptRail, availableAmount, pendingCvcRecollectionRail, railErrorCode } from "@/lib/rails";
 
 function normalize(
   rail: AgentCardCredentials["rail"],
@@ -63,7 +72,19 @@ async function fallbackEncryptedCard(
   err: unknown,
 ): Promise<RevealedCredentials> {
   const latest = await latestIntent(jwt, orderIntent);
-  if (availableAmount(latest) <= 0 || !activeEncryptedCardRail(latest)) throw err;
+  if (availableAmount(latest) <= 0) throw err;
+  if (!activeEncryptedCardRail(latest)) {
+    // The fallback exists but its CVC aged out: report that instead of the
+    // network failure, so the UI can offer the CVC form.
+    if (pendingCvcRecollectionRail(latest)) {
+      const cause = err instanceof Error ? err.message : String(err);
+      throw new CrossmintApiError(
+        `${cause}. The encrypted-card fallback needs the card's CVC again before it can be used.`,
+        CVC_RECOLLECTION_REQUIRED_CODE,
+      );
+    }
+    throw err;
+  }
   return revealEncryptedCard(jwt, latest.orderIntentId);
 }
 

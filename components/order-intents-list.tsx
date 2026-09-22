@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CreditCard, Plus, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
-import { availableAmount, isUsable, needsVerification, pendingAgenticRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
+import { availableAmount, isUsable, needsVerification, pendingAgenticRail, pendingCvcRecollectionRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
@@ -184,6 +184,12 @@ function OrderIntentItem({
           <div className="mt-2 pl-8">
             <RailRow rails={orderIntent.rails} muted={isExhausted(orderIntent)} />
           </div>
+        )}
+
+        {!pending && !isUsable(orderIntent) && pendingCvcRecollectionRail(orderIntent) && (
+          <p className="mt-2 text-xs leading-4 text-[#9A6700]">
+            The saved CVC for this card has expired. Re-enter it in Step 3 to use encrypted-card again.
+          </p>
         )}
 
         {pending && (
