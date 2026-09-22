@@ -6,7 +6,7 @@
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 /** Why the app made a call, when the path alone does not say. Set client-side. */
-export type TraceContext = "cvc-recollected" | "rail-selected";
+export type TraceContext = "cvc-recollected" | "rail-selected" | "cvc-expired";
 
 export type ApiTrace = {
   id: string;

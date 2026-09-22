@@ -43,6 +43,8 @@ Crossmint keeps the CVC you typed when saving the card for a limited time. Once 
 
 Rail status is a read-time snapshot: the API does not expose when the CVC ages out, so a rail read as `active` can be `pending_cvc_recollection` by the time the agent mints. Handle both signals: the app re-reads the allowance when the user picks `encrypted-card` (so the CVC form usually appears before a wasted mint), and if a mint still hits the 409 it re-reads, switches to the CVC form, and shows the recollection banner instead of a red error. See `components/cvc-recollection.tsx`, `lib/mint-failure.ts` and `lib/rails.ts`.
 
+To try it without waiting a day, staging exposes `POST /cvc-recollection/expire` with `{ paymentMethodId }`: it ages the card's CVC clock out on the spot. In Step 3, select `encrypted-card` and click **Simulate CVC expiry**; the app calls it, re-reads the allowance and shows the CVC form. To see the mint-time `409` instead, run it from a second tab and click **Reveal details** in the first. The control and the endpoint do not exist in production.
+
 `pnpm test` runs the unit tests for the 409 recovery path and the timeline explanations.
 
 When you select `encrypted-card` in Step 3, reveal and decrypt are two steps. Paste an RSA 2048 public key in PEM (`BEGIN PUBLIC KEY`, SPKI), or click "Generate a keypair" to fill one in. "Reveal details" sends that key and shows the returned JWE, not the card. Then paste the matching private key (`BEGIN PRIVATE KEY`, PKCS#8) under "Decrypt in this browser" and click "Decrypt" to read the card locally. The generated private key is prefilled there. The fallback after a failed mint uses a one-time key and decrypts at once.

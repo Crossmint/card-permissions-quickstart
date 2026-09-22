@@ -64,6 +64,13 @@ describe("explain: order-intent re-reads", () => {
       title: /snapshot/,
     },
     {
+      name: "the re-read after a simulated expiry surfaces the pending rail",
+      context: "cvc-expired" as const,
+      status: "pending_cvc_recollection" as const,
+      important: true,
+      title: /simulating CVC expiry/,
+    },
+    {
       name: "an untagged re-read of an active rail stays in the background",
       context: undefined,
       status: "active" as const,

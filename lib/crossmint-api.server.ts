@@ -245,6 +245,18 @@ export async function removePaymentMethod(jwt: string, paymentMethodId: string):
   });
 }
 
+/**
+ * Staging only: age the card's CVC clock out so the encrypted-card rail reads
+ * pending_cvc_recollection and a mint returns 409 ORDER_INTENT_CVC_RECOLLECTION_REQUIRED.
+ * Production has no such endpoint (404); the UI never offers it there.
+ */
+export async function expireCardCvc(jwt: string, paymentMethodId: string): Promise<ActionResult<void>> {
+  return traced(async () => {
+    const out = await crossmintFetch("POST", "/cvc-recollection/expire", jwt, { paymentMethodId });
+    if (!out.ok) throw apiError("Failed to expire the card's CVC", out);
+  });
+}
+
 // ─── Card registration ──────────────────────────────────────────────────────
 // Before a card can back an allowance, register it once. Registration
 // provisions the agentic rails (Visa, Mastercard) the card supports. It has
