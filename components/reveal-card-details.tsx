@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole } from "lucide-react";
 import { type Merchant, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
@@ -11,6 +11,7 @@ import { RailBadge, RailRow, RailSelect } from "./rail-badge";
 import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
 import { CvcRecollection } from "./cvc-recollection";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
+import type { TraceContext } from "@/lib/api-trace";
 import { describeMintFailure } from "@/lib/mint-failure";
 
 // The encrypted-card rail returns no expiry. Hide those details after a fixed time.
@@ -84,6 +85,18 @@ export function RevealCardDetails({
   const [decryptingOrderIntentId, setDecryptingOrderIntentId] = useState<string | null>(null);
   // The allowance whose last mint was refused with ORDER_INTENT_CVC_RECOLLECTION_REQUIRED.
   const [cvcRefusedOrderIntentId, setCvcRefusedOrderIntentId] = useState<string | null>(null);
+  // Re-reads of one allowance can overlap (rail selected, then Reveal). Only the
+  // most recently started read may update the parent, so an older snapshot cannot
+  // overwrite a newer one.
+  const readSeqByOrderIntentId = useRef<Record<string, number>>({});
+
+  const refreshAllowance = async (orderIntentId: string, context?: TraceContext) => {
+    if (!onUpdated) return;
+    const seq = (readSeqByOrderIntentId.current[orderIntentId] ?? 0) + 1;
+    readSeqByOrderIntentId.current[orderIntentId] = seq;
+    const latest = await fetchOrderIntent(getJwt(), orderIntentId, context);
+    if (readSeqByOrderIntentId.current[orderIntentId] === seq) onUpdated(latest);
+  };
 
   const updateKeyState = (orderIntentId: string, patch: Partial<KeyState>) =>
     setKeyStateByOrderIntentId((current) => ({
@@ -127,27 +140,23 @@ export function RevealCardDetails({
       setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
       setExpandedOrderIntentId(null);
       // Minting reserves the amount. Re-read so the balance shown goes down.
-      if (onUpdated) {
-        try {
-          onUpdated(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId));
-        } catch (err) {
-          console.error("Could not refresh the allowance after minting:", err);
-        }
+      try {
+        await refreshAllowance(orderIntent.orderIntentId);
+      } catch (err) {
+        console.error("Could not refresh the allowance after minting:", err);
       }
     } catch (err) {
       const failure = describeMintFailure(err);
       setError(orderIntent.orderIntentId, failure.message);
-      // Re-read so the rail shows pending_cvc_recollection and the CVC form takes over.
+      // The 409 alone opens the CVC form; the re-read only syncs the rail badge.
       if (failure.cvcRecollectionRequired) {
         setCvcRefusedOrderIntentId(orderIntent.orderIntentId);
         setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: "encrypted-card" }));
         setExpandedOrderIntentId(null);
-        if (onUpdated) {
-          try {
-            onUpdated(await fetchOrderIntent(getJwt(), orderIntent.orderIntentId));
-          } catch (refreshErr) {
-            console.error("Could not refresh the allowance after the CVC refusal:", refreshErr);
-          }
+        try {
+          await refreshAllowance(orderIntent.orderIntentId);
+        } catch (refreshErr) {
+          console.error("Could not refresh the allowance after the CVC refusal:", refreshErr);
         }
       }
     } finally {
@@ -158,9 +167,8 @@ export function RevealCardDetails({
   // Rail status is a read-time snapshot: the vaulted CVC can age out while the
   // page is open. Re-read before the user generates a key and clicks Reveal.
   const refreshBeforeMint = async (orderIntentId: string) => {
-    if (!onUpdated) return;
     try {
-      onUpdated(await fetchOrderIntent(getJwt(), orderIntentId, "rail-selected"));
+      await refreshAllowance(orderIntentId, "rail-selected");
     } catch (err) {
       console.error("Could not refresh the allowance before minting:", err);
     }
@@ -244,7 +252,9 @@ export function RevealCardDetails({
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
         const isEncrypted = selectedRail?.rail === "encrypted-card";
-        const needsCvc = isEncrypted && selectedRail?.status === "pending_cvc_recollection";
+        const needsCvc =
+          isEncrypted &&
+          (selectedRail?.status === "pending_cvc_recollection" || cvcRefusedOrderIntentId === orderIntent.orderIntentId);
         const keyState = keyStateByOrderIntentId[orderIntent.orderIntentId] ?? DEFAULT_KEY_STATE;
         const needsMerchant = !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
@@ -348,6 +358,9 @@ export function RevealCardDetails({
                   onRecollected={(latest) => {
                     setError(orderIntent.orderIntentId, "");
                     setCvcRefusedOrderIntentId((current) => (current === orderIntent.orderIntentId ? null : current));
+                    // Newest snapshot: an older in-flight read must not overwrite it.
+                    readSeqByOrderIntentId.current[orderIntent.orderIntentId] =
+                      (readSeqByOrderIntentId.current[orderIntent.orderIntentId] ?? 0) + 1;
                     onUpdated?.(latest);
                   }}
                 />
