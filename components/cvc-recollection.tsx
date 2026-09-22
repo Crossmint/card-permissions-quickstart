@@ -30,10 +30,13 @@ const REASON_TEXT: Record<CvcRecollectionError["reason"], string> = {
 export function CvcRecollection({
   orderIntent,
   jwt,
+  afterRefusedMint = false,
   onRecollected,
 }: {
   orderIntent: OrderIntentResponse;
   jwt: string;
+  /** The form opened because POST /credentials answered 409 on a rail the app still showed as active. */
+  afterRefusedMint?: boolean;
   /** Called with the re-read allowance once the rail is active again. */
   onRecollected: (orderIntent: OrderIntentResponse) => void;
 }) {
@@ -47,7 +50,7 @@ export function CvcRecollection({
     setConfirming(true);
     setConfirmError("");
     try {
-      const latest = await fetchOrderIntent(jwt, orderIntent.orderIntentId);
+      const latest = await fetchOrderIntent(jwt, orderIntent.orderIntentId, "cvc-recollected");
       onRecollected(latest);
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : "Could not re-read the allowance.");
@@ -61,7 +64,10 @@ export function CvcRecollection({
       <div className="flex items-start gap-2 text-xs text-[#9A6700]">
         <ShieldCheck className="size-3.5 shrink-0 mt-0.5" />
         <p>
-          The saved CVC for this card has expired. Enter it again below; it goes straight to Crossmint&apos;s vault and this app never sees it.
+          {afterRefusedMint
+            ? "Crossmint refused to mint: the saved CVC for this card expired after the allowance was last read. "
+            : "The saved CVC for this card has expired. "}
+          Enter it again below; it goes straight to Crossmint&apos;s vault and this app never sees it.
           Then the <span className="font-mono">encrypted-card</span> rail is active again.
         </p>
       </div>

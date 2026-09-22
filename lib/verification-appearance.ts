@@ -6,13 +6,17 @@ export type CvcRecollectionAppearance = NonNullable<Parameters<typeof CrossmintC
 
 /**
  * CrossmintCvcRecollection shares the embedded-checkout appearance model, where
- * `fontSizeUnit` and `spacingUnit` are multipliers (defaults 4px and 3.33px),
- * not base sizes like in the verification modal. Passing 14px there renders
- * 52px labels. Only colours and radii are shared.
+ * `fontSizeUnit` and `spacingUnit` are multiplier units, not base sizes like in
+ * the verification modal above. The hosted page renders label = 3.75 units,
+ * input = 4, button = 4.25; paddings scale from `spacingUnit`. The values below
+ * are the SDK defaults (15/16/17px); passing the verification `14px` here
+ * renders 52px labels. Colours and radii are shared with the modal.
  */
 export const cvcRecollectionAppearance: CvcRecollectionAppearance = {
   variables: {
     fontFamily: '"Inter", system-ui, sans-serif',
+    fontSizeUnit: "4px",
+    spacingUnit: "3.33px",
     borderRadius: "0.5rem",
     colors: {
       accent: "#00C768",

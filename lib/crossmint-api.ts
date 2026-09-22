@@ -20,6 +20,7 @@ import {
   type AllData,
 } from "@/lib/crossmint-api.server";
 import { addTraces } from "@/lib/api-log";
+import type { TraceContext } from "@/lib/api-trace";
 import type {
   AgenticTokenCredentialResponse,
   CreateOrderIntentInput,
@@ -52,9 +53,9 @@ export function apiErrorCode(err: unknown): string | undefined {
 }
 
 /** Record traces, then unwrap the data or rethrow the server-side failure. */
-async function unwrap<T>(pending: Promise<ActionResult<T>>): Promise<T> {
+async function unwrap<T>(pending: Promise<ActionResult<T>>, context?: TraceContext): Promise<T> {
   const { data, traces } = await pending;
-  addTraces(traces);
+  addTraces(context ? traces.map((trace) => ({ ...trace, context })) : traces);
   const failure = data as unknown as { __error?: string; __code?: string } | null;
   if (failure && typeof failure === "object" && typeof failure.__error === "string") {
     throw new CrossmintApiError(failure.__error, failure.__code);
@@ -76,8 +77,8 @@ export const registerCard = (jwt: string, paymentMethodId: string, email: string
 
 export const fetchOrderIntents = (jwt: string): Promise<OrderIntentResponse[]> => unwrap(fetchOrderIntentsAction(jwt));
 
-export const fetchOrderIntent = (jwt: string, orderIntentId: string): Promise<OrderIntentResponse> =>
-  unwrap(fetchOrderIntentAction(jwt, orderIntentId));
+export const fetchOrderIntent = (jwt: string, orderIntentId: string, context?: TraceContext): Promise<OrderIntentResponse> =>
+  unwrap(fetchOrderIntentAction(jwt, orderIntentId), context);
 
 export const createNewOrderIntent = (jwt: string, input: CreateOrderIntentInput): Promise<OrderIntentResponse> =>
   unwrap(createNewOrderIntentAction(jwt, input));

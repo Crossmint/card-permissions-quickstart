@@ -232,6 +232,29 @@ function explainCall(trace: ApiTrace): Explained {
   }
   const intent = trace.ok ? (res as unknown as OrderIntentResponse) : undefined;
   const rails = intentRails(intent);
+  if (trace.context === "cvc-recollected") {
+    const stillPending = rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection");
+    return {
+      step: 3,
+      important: true,
+      title: stillPending
+        ? "Re-read the allowance after CVC recollection. The rail is still pending; the vault write may not have landed yet."
+        : "Re-read the allowance after CVC recollection. The encrypted-card rail is active again.",
+      facts: intentFacts(intent, rails),
+      rails,
+      error,
+    };
+  }
+  if (trace.context === "rail-selected") {
+    return {
+      step: 3,
+      important: rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection"),
+      title: "Re-read the allowance before minting. Rail status is a snapshot: the CVC can age out while the page is open.",
+      facts: intentFacts(intent, rails),
+      rails,
+      error,
+    };
+  }
   const reserved = Number(intent?.amount?.reserved ?? 0);
   const spent = Number(intent?.amount?.spent ?? 0);
   if (intent && (reserved > 0 || spent > 0)) {
