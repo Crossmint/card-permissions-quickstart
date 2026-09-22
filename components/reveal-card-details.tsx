@@ -83,8 +83,8 @@ export function RevealCardDetails({
   const [errorByOrderIntentId, setErrorByOrderIntentId] = useState<Record<string, string>>({});
   const [keyStateByOrderIntentId, setKeyStateByOrderIntentId] = useState<Record<string, KeyState>>({});
   const [decryptingOrderIntentId, setDecryptingOrderIntentId] = useState<string | null>(null);
-  // The allowance whose last mint was refused with ORDER_INTENT_CVC_RECOLLECTION_REQUIRED.
-  const [cvcRefusedOrderIntentId, setCvcRefusedOrderIntentId] = useState<string | null>(null);
+  // Allowances whose last mint was refused with ORDER_INTENT_CVC_RECOLLECTION_REQUIRED.
+  const [cvcRefusedOrderIntentIds, setCvcRefusedOrderIntentIds] = useState<ReadonlySet<string>>(new Set());
   // Re-reads of one allowance can overlap (rail selected, then Reveal). Only the
   // most recently started read may update the parent, so an older snapshot cannot
   // overwrite a newer one.
@@ -150,7 +150,7 @@ export function RevealCardDetails({
       setError(orderIntent.orderIntentId, failure.message);
       // The 409 alone opens the CVC form; the re-read only syncs the rail badge.
       if (failure.cvcRecollectionRequired) {
-        setCvcRefusedOrderIntentId(orderIntent.orderIntentId);
+        setCvcRefusedOrderIntentIds((current) => new Set(current).add(orderIntent.orderIntentId));
         setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: "encrypted-card" }));
         setExpandedOrderIntentId(null);
         try {
@@ -254,7 +254,7 @@ export function RevealCardDetails({
         const isEncrypted = selectedRail?.rail === "encrypted-card";
         const needsCvc =
           isEncrypted &&
-          (selectedRail?.status === "pending_cvc_recollection" || cvcRefusedOrderIntentId === orderIntent.orderIntentId);
+          (selectedRail?.status === "pending_cvc_recollection" || cvcRefusedOrderIntentIds.has(orderIntent.orderIntentId));
         const keyState = keyStateByOrderIntentId[orderIntent.orderIntentId] ?? DEFAULT_KEY_STATE;
         const needsMerchant = !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
@@ -352,12 +352,16 @@ export function RevealCardDetails({
               <>
                 {error && revealingOrderIntentId === null && <p className="px-4 pt-3 text-xs text-red-600 break-words">{error}</p>}
                 <CvcRecollection
-                  afterRefusedMint={cvcRefusedOrderIntentId === orderIntent.orderIntentId}
+                  afterRefusedMint={cvcRefusedOrderIntentIds.has(orderIntent.orderIntentId)}
                   orderIntent={orderIntent}
                   jwt={getJwt()}
                   onRecollected={(latest) => {
                     setError(orderIntent.orderIntentId, "");
-                    setCvcRefusedOrderIntentId((current) => (current === orderIntent.orderIntentId ? null : current));
+                    setCvcRefusedOrderIntentIds((current) => {
+                      const next = new Set(current);
+                      next.delete(orderIntent.orderIntentId);
+                      return next;
+                    });
                     // Newest snapshot: an older in-flight read must not overwrite it.
                     readSeqByOrderIntentId.current[orderIntent.orderIntentId] =
                       (readSeqByOrderIntentId.current[orderIntent.orderIntentId] ?? 0) + 1;
