@@ -9,21 +9,17 @@
 
 import { useState } from "react";
 import { Loader2, ShieldCheck } from "lucide-react";
-import { CrossmintCvcRecollection } from "@crossmint/client-sdk-react-ui";
+import { CrossmintCvcRecollection, type CvcRecollectionError } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
 import { cvcRecollectionAppearance } from "@/lib/verification-appearance";
-
-// react-ui exports the component but not its prop or error types (they live in
-// @crossmint/client-sdk-base, which is not a direct dependency here).
-type CrossmintCvcRecollectionProps = Parameters<typeof CrossmintCvcRecollection>[0];
-type CvcRecollectionError = Parameters<NonNullable<CrossmintCvcRecollectionProps["onError"]>>[0];
 
 const REASON_TEXT: Record<CvcRecollectionError["reason"], string> = {
   "widget-unavailable": "The CVC form could not load.",
   "invalid-configuration": "This card cannot recollect its CVC. Check that it is a saved card of the signed-in user.",
   "invalid-credentials": "Your session was rejected. Sign in again and retry.",
   "provider-error": "The card vault rejected the CVC.",
+  "verification-refused": "The CVC was saved, but Crossmint could not verify it. Please try again.",
   unknown: "Something went wrong while saving the CVC.",
 };
 

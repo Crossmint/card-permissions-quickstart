@@ -1,8 +1,8 @@
-import type { CrossmintCvcRecollection, OrderIntentVerificationProps } from "@crossmint/client-sdk-react-ui";
+import type { OrderIntentVerificationProps, PaymentMethodManagementAppearance } from "@crossmint/client-sdk-react-ui";
 
 export type VerificationAppearance = NonNullable<OrderIntentVerificationProps["appearance"]>;
 
-export type CvcRecollectionAppearance = NonNullable<Parameters<typeof CrossmintCvcRecollection>[0]["appearance"]>;
+export type CvcRecollectionAppearance = PaymentMethodManagementAppearance;
 
 /**
  * CrossmintCvcRecollection shares the embedded-checkout appearance model, where
