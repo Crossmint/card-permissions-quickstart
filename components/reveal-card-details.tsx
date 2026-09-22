@@ -323,7 +323,7 @@ export function RevealCardDetails({
                     <EyeOff className="size-3.5" />
                     Hide details
                   </button>
-                ) : (
+                ) : isEncrypted ? null : (
                   <button
                     type="button"
                     disabled={!canReveal || isRevealing}
@@ -338,10 +338,6 @@ export function RevealCardDetails({
                     }
                     onClick={() => {
                       if (!selectedRail) return;
-                      if (isEncrypted) {
-                        void revealEncryptedCard(orderIntent, encryptionMode, keyState);
-                        return;
-                      }
                       setExpandedOrderIntentId(isExpanded ? null : orderIntent.orderIntentId);
                       setAmount(orderIntent.amount.available);
                       setError(orderIntent.orderIntentId, "");
@@ -349,7 +345,7 @@ export function RevealCardDetails({
                     className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs font-medium text-[#05B959] hover:text-[#049d4c] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
-                    {isEncrypted && encryptionMode === "generated" ? "Reveal and decrypt" : "Reveal details"}
+                    Reveal details
                   </button>
                 )}
               </div>
@@ -448,6 +444,20 @@ export function RevealCardDetails({
                 )}
 
                 {error && revealingOrderIntentId === null && <p className="text-xs text-red-600 break-words">{error}</p>}
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    disabled={!canReveal || isRevealing}
+                    title={missingPublicKey ? "Paste your public key first" : undefined}
+                    onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState)}
+                    className="inline-flex items-center gap-2 rounded-md bg-[#05B959] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#049d4c] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <LockKeyhole className="size-3.5" />}
+                    {isRevealing
+                      ? encryptionMode === "generated" ? "Encrypting and decrypting…" : "Encrypting card…"
+                      : encryptionMode === "generated" ? "Reveal and decrypt card" : "Get encrypted card"}
+                  </button>
+                </div>
               </div>
             )}
 
