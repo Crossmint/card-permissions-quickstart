@@ -107,7 +107,7 @@ export function IssueCardPermission({
       <div className="rounded-[10px] border border-[rgba(0,0,0,0.1)] bg-white overflow-hidden">
         {/* Card selector */}
         <div className="p-4 pb-4">
-          <label className="text-xs font-medium text-[#00150d]/60 block mb-1.5">Origin source</label>
+          <label className="text-xs font-medium text-[#00150d]/60 block mb-1.5">Card for this allowance</label>
           <div className="relative" ref={selectorRef}>
             <button
               type="button"

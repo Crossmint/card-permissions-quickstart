@@ -153,6 +153,7 @@ export default function Page() {
   const [registrations, setRegistrations] = useState<Record<string, OrderIntentRegistration | null>>({});
   const [showSaveCard, setShowSaveCard] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [selectedAllowanceId, setSelectedAllowanceId] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<StepNumber>(1);
   const [landed, setLanded] = useState(false);
   const [issuingForCard, setIssuingForCard] = useState<string | null>(null);
@@ -216,6 +217,7 @@ export default function Page() {
 
   const handleCardIssued = (orderIntent: OrderIntentResponse) => {
     upsertOrderIntent(orderIntent);
+    setSelectedAllowanceId(orderIntent.orderIntentId);
     setIssuingForCard(null);
     // Re-read once: rail statuses are read live from the provider.
     void fetchOrderIntent(getJwt(), orderIntent.orderIntentId)
@@ -228,6 +230,7 @@ export default function Page() {
   const handleCancelOrderIntent = async (orderIntent: OrderIntentResponse) => {
     await deleteOrderIntent(getJwt(), orderIntent.orderIntentId);
     setOrderIntents((current) => current.filter((intent) => intent.orderIntentId !== orderIntent.orderIntentId));
+    if (selectedAllowanceId === orderIntent.orderIntentId) setSelectedAllowanceId(null);
   };
 
   // A card backs allowances once its registration has settled: rails enabled,
@@ -249,6 +252,18 @@ export default function Page() {
       intent.status === "active" &&
       (activeCardRail(intent) !== undefined || activeSptRail(intent) !== undefined || pendingCvcRecollectionRail(intent) !== undefined),
   );
+  const selectedRevealableAllowance = revealableOrderIntents.find(
+    (intent) => intent.orderIntentId === selectedAllowanceId,
+  );
+
+  useEffect(() => {
+    if (revealableOrderIntents.length === 0) {
+      if (selectedAllowanceId !== null) setSelectedAllowanceId(null);
+      return;
+    }
+    if (selectedRevealableAllowance) return;
+    setSelectedAllowanceId(revealableOrderIntents[0].orderIntentId);
+  }, [revealableOrderIntents, selectedAllowanceId, selectedRevealableAllowance]);
 
   // One step is shown at a time. A step unlocks when the previous one has
   // produced what it needs: a registered card for 02, a usable allowance for 03.
@@ -256,7 +271,7 @@ export default function Page() {
   const unlocked: Record<StepNumber, boolean> = {
     1: true,
     2: hasRegisteredCard,
-    3: revealableOrderIntents.length > 0,
+    3: Boolean(selectedRevealableAllowance),
   };
   // The furthest step the data allows. Used to land on the right step after load.
   const furthestStep: StepNumber = !hasRegisteredCard ? 1 : revealableOrderIntents.length === 0 ? 2 : 3;
@@ -386,8 +401,8 @@ export default function Page() {
           <div className="bg-white rounded-[10px] p-5">
             <StepHeader
               step="02"
-              title="Create allowance"
-              subtitle="Give an agent permission to pay with your card, up to an amount and until an expiry."
+              title="Choose an allowance"
+              subtitle="Use an existing allowance for this quickstart, or create a new one. Your selection carries into the reveal step."
             />
 
             <OrderIntentsList
@@ -396,6 +411,8 @@ export default function Page() {
               getJwt={getJwt}
               onUpdated={upsertOrderIntent}
               onCancel={handleCancelOrderIntent}
+              selectedOrderIntentId={selectedAllowanceId}
+              onSelectOrderIntent={setSelectedAllowanceId}
               onIssueCardPermission={
                 !issuingForCard && defaultIssueCard
                   ? () => setIssuingForCard(defaultIssueCard.paymentMethodId)
@@ -425,10 +442,10 @@ export default function Page() {
             <StepHeader
               step="03"
               title="Reveal card details"
-              subtitle="Choose a rail, then reveal card details. If minting it fails, the app reveals the saved card on encrypted-card."
+              subtitle="Choose a rail for the allowance you selected, then reveal its card details."
             />
             <RevealCardDetails
-              orderIntents={revealableOrderIntents}
+              orderIntents={selectedRevealableAllowance ? [selectedRevealableAllowance] : []}
               loading={loading}
               getJwt={getJwt}
               onUpdated={upsertOrderIntent}
