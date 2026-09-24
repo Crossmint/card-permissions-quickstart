@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, CreditCard, Plus, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
-import { availableAmount, isUsable, needsVerification, pendingAgenticRail, pendingCvcRecollectionRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
+import { availableAmount, isRevealable, isUsable, needsVerification, pendingAgenticRail, pendingCvcRecollectionRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
@@ -264,6 +264,19 @@ export function OrderIntentsList({
   onSelectOrderIntent: (orderIntentId: string) => void;
 }) {
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState("");
+  const cancelAllowance = async (intent: OrderIntentResponse) => {
+    setCancellingId(intent.orderIntentId);
+    setCancelError("");
+    try {
+      await onCancel(intent);
+    } catch (error) {
+      setCancelError(error instanceof Error ? error.message : "Could not delete allowance. Try again.");
+    } finally {
+      setCancellingId(null);
+    }
+  };
   const selectorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -301,8 +314,8 @@ export function OrderIntentsList({
   }
 
   const sorted = [...orderIntents].sort((a, b) => Number(isUsable(b)) - Number(isUsable(a)));
-  const selectable = sorted.filter((intent) => isUsable(intent) || pendingCvcRecollectionRail(intent));
-  const selected = selectable.find((intent) => intent.orderIntentId === selectedOrderIntentId) ?? selectable[0];
+  const selectable = sorted.filter(isRevealable);
+  const selected = sorted.find((intent) => intent.orderIntentId === selectedOrderIntentId);
   const selectorIntents = sorted.filter((intent) => selectable.includes(intent) || intent.status === "expired");
   const needsAction = sorted.filter((intent) => intent.status !== "expired" && !selectable.includes(intent));
 
@@ -333,7 +346,7 @@ export function OrderIntentsList({
               </div>
               <ChevronDown className={`size-4 shrink-0 text-[#00150d]/60 transition-transform ${selectorOpen ? "rotate-180" : ""}`} />
             </button>
-            {selected && <DotsMenu onDelete={() => onCancel(selected)} deleteLabel="Cancel allowance" />}
+            {selected && (cancellingId ? <Loader2 className="size-4 animate-spin" aria-label="Deleting allowance" /> : <DotsMenu onDelete={() => void cancelAllowance(selected)} deleteLabel="Cancel allowance" />)}
           </div>
 
           {selectorOpen && (
@@ -376,7 +389,7 @@ export function OrderIntentsList({
                         </div>
                         {isSelected && <Check className="size-4 shrink-0 text-[#05B959]" />}
                       </button>
-                      {expired && <DotsMenu onDelete={() => onCancel(orderIntent)} deleteLabel="Delete expired allowance" />}
+                      {expired && (cancellingId ? <Loader2 className="size-4 animate-spin" aria-label="Deleting allowance" /> : <DotsMenu onDelete={() => void cancelAllowance(orderIntent)} deleteLabel="Delete expired allowance" />)}
                     </div>
                   );
                 })}
@@ -399,6 +412,7 @@ export function OrderIntentsList({
         </div>
       )}
 
+      {cancelError && <p role="alert" className="text-xs text-red-600">{cancelError}</p>}
       {needsAction.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs font-medium text-[#00150d]/60">Needs attention</p>

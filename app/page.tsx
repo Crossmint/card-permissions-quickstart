@@ -7,7 +7,7 @@ import { useStytch, useStytchUser } from "@stytch/nextjs";
 import { useCrossmint } from "@crossmint/client-sdk-react-ui";
 import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodResponse } from "@/lib/crossmint-types";
 import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
-import { activeCardRail, activeSptRail, isRegistrationSettled, isUsable, pendingCvcRecollectionRail } from "@/lib/rails";
+import { isRevealable, resolveAllowanceSelection, isRegistrationSettled, isUsable } from "@/lib/rails";
 import { IS_PRODUCTION } from "@/lib/crossmint-env";
 import { SavedCardsList } from "@/components/saved-cards-list";
 import { SaveCardSection } from "@/components/save-card-section";
@@ -247,23 +247,15 @@ export default function Page() {
   const usableOrderIntents = visibleOrderIntents.filter(isUsable);
   // Step 03 also lists exhausted allowances, so the user sees the balance reach zero,
   // and allowances whose encrypted-card rail waits for its CVC, so the user can re-enter it there.
-  const revealableOrderIntents = visibleOrderIntents.filter(
-    (intent) =>
-      intent.status === "active" &&
-      (activeCardRail(intent) !== undefined || activeSptRail(intent) !== undefined || pendingCvcRecollectionRail(intent) !== undefined),
-  );
+  const revealableOrderIntents = visibleOrderIntents.filter(isRevealable);
   const selectedRevealableAllowance = revealableOrderIntents.find(
     (intent) => intent.orderIntentId === selectedAllowanceId,
   );
 
   useEffect(() => {
-    if (revealableOrderIntents.length === 0) {
-      if (selectedAllowanceId !== null) setSelectedAllowanceId(null);
-      return;
-    }
-    if (selectedRevealableAllowance) return;
-    setSelectedAllowanceId(revealableOrderIntents[0].orderIntentId);
-  }, [revealableOrderIntents, selectedAllowanceId, selectedRevealableAllowance]);
+    const next = resolveAllowanceSelection(visibleOrderIntents, selectedAllowanceId);
+    if (next !== selectedAllowanceId) setSelectedAllowanceId(next);
+  }, [visibleOrderIntents, selectedAllowanceId]);
 
   // One step is shown at a time. A step unlocks when the previous one has
   // produced what it needs: a registered card for 02, a usable allowance for 03.

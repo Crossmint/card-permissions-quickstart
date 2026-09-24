@@ -87,6 +87,18 @@ export function needsVerification(intent: OrderIntentResponse): boolean {
 }
 
 /** True when the intent is active and can mint a card or shared payment token. */
+export function isRevealable(intent: OrderIntentResponse): boolean {
+  return intent.status === "active" && Boolean(
+    activeCardRail(intent) || activeSptRail(intent) || pendingCvcRecollectionRail(intent),
+  );
+}
+
+/** Preserve an explicit active selection, including while bank verification is pending. */
+export function resolveAllowanceSelection(intents: OrderIntentResponse[], selectedId: string | null): string | null {
+  if (intents.some((intent) => intent.orderIntentId === selectedId && intent.status === "active")) return selectedId;
+  return intents.find(isUsable)?.orderIntentId ?? intents.find(isRevealable)?.orderIntentId ?? null;
+}
+
 export function isUsable(intent: OrderIntentResponse): boolean {
   return (
     intent.status === "active" &&

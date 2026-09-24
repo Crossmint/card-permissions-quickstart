@@ -140,25 +140,14 @@ export function RevealCardDetails({
       let publicKey: RsaPublicJwk | undefined;
       if (options.publicPem !== undefined) publicKey = await importRsaPublicKeyPem(options.publicPem);
       const credentials = await revealCardCredentials(getJwt(), orderIntent, { ...options, publicKey });
+      // Retain the successful response even if local decryption fails.
+      setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
       if (credentials.kind === "jwe") {
         setEncryptedJweByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials.jwe }));
       }
       if (credentials.kind === "jwe" && options.autoDecryptPrivatePem) {
-        const privateKey = await importRsaPrivateKeyPem(options.autoDecryptPrivatePem);
-        const card = await decryptCardJwe(credentials.jwe, privateKey);
-        setCredentialsByOrderIntentId((current) => ({
-          ...current,
-          [orderIntent.orderIntentId]: {
-            kind: "card",
-            rail: "encrypted-card",
-            number: String(card.number),
-            expirationMonth: String(card.expirationMonth),
-            expirationYear: String(card.expirationYear),
-            cvc: String(card.cvc),
-          },
-        }));
-      } else {
-        setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
+        // This handler reports local errors beside the existing JWE and never re-mints.
+        await decryptJwe(orderIntent.orderIntentId, credentials.jwe, options.autoDecryptPrivatePem);
       }
       setExpandedOrderIntentId(null);
       // Minting reserves the amount. Re-read so the balance shown goes down.
