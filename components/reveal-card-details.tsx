@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole } from "lucide-react";
+import { Check, Copy, CreditCard, Eye, EyeOff, FlaskConical, KeyRound, Loader2, LockKeyhole } from "lucide-react";
 import { type Merchant, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { decryptCardJwe, generateRsaKeyPairPem, importRsaPrivateKeyPem, importRsaPublicKeyPem } from "@/lib/encrypted-card";
@@ -10,7 +10,8 @@ import { activeCardRails, activeSptRail, clampDelay, pendingCvcRecollectionRail 
 import { RailBadge, RailRow, RailSelect } from "./rail-badge";
 import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
 import { CvcRecollection } from "./cvc-recollection";
-import { fetchOrderIntent } from "@/lib/crossmint-api";
+import { expireCardCvc, fetchOrderIntent } from "@/lib/crossmint-api";
+import { IS_PRODUCTION } from "@/lib/crossmint-env";
 import type { TraceContext } from "@/lib/api-trace";
 import { describeMintFailure } from "@/lib/mint-failure";
 
@@ -88,6 +89,7 @@ export function RevealCardDetails({
   const [decryptingOrderIntentId, setDecryptingOrderIntentId] = useState<string | null>(null);
   // Allowances whose last mint was refused with ORDER_INTENT_CVC_RECOLLECTION_REQUIRED.
   const [cvcRefusedOrderIntentIds, setCvcRefusedOrderIntentIds] = useState<ReadonlySet<string>>(new Set());
+  const [expiringOrderIntentId, setExpiringOrderIntentId] = useState<string | null>(null);
   // Re-reads of one allowance can overlap (rail selected, then Reveal). Only the
   // most recently started read may update the parent, so an older snapshot cannot
   // overwrite a newer one.
@@ -184,6 +186,22 @@ export function RevealCardDetails({
       await refreshAllowance(orderIntentId, "rail-selected");
     } catch (err) {
       console.error("Could not refresh the allowance before minting:", err);
+    }
+  };
+
+  // Staging only. Ages the card's CVC clock out on the server, then re-reads the
+  // allowance so the rail flips to pending_cvc_recollection and the CVC form appears.
+  // To see the mint-time 409 instead, run this in a second tab and click Reveal here.
+  const simulateCvcExpiry = async (orderIntent: OrderIntentResponse) => {
+    setExpiringOrderIntentId(orderIntent.orderIntentId);
+    setError(orderIntent.orderIntentId, "");
+    try {
+      await expireCardCvc(getJwt(), orderIntent.paymentMethodId);
+      await refreshAllowance(orderIntent.orderIntentId, "cvc-expired");
+    } catch (err) {
+      setError(orderIntent.orderIntentId, err instanceof Error ? err.message : "Could not expire the CVC");
+    } finally {
+      setExpiringOrderIntentId(null);
     }
   };
 
@@ -289,6 +307,7 @@ export function RevealCardDetails({
         const missingPublicKey = isEncrypted && encryptionMode === "custom" && keyState.publicPem.trim() === "";
         const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey && !needsCvc;
         const isDecrypting = decryptingOrderIntentId === orderIntent.orderIntentId;
+        const isExpiring = expiringOrderIntentId === orderIntent.orderIntentId;
 
         return (
           <div
@@ -320,7 +339,7 @@ export function RevealCardDetails({
                 ) : isEncrypted ? null : (
                   <button
                     type="button"
-                    disabled={!canReveal || isRevealing}
+                    disabled={!canReveal || isRevealing || isExpiring}
                     title={
                       canReveal
                         ? undefined
@@ -438,10 +457,16 @@ export function RevealCardDetails({
                 )}
 
                 {error && revealingOrderIntentId === null && <p className="text-xs text-red-600 break-words">{error}</p>}
-                <div className="flex justify-end pt-1">
+                <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
+                  {!IS_PRODUCTION && (
+                    <button type="button" onClick={() => void simulateCvcExpiry(orderIntent)} disabled={isExpiring || isRevealing} className="inline-flex items-center gap-1 text-xs text-[#9A6700] underline underline-offset-2 disabled:opacity-50">
+                      {isExpiring ? <Loader2 className="size-3 animate-spin" /> : <FlaskConical className="size-3" />}
+                      {isExpiring ? "Simulating…" : "Simulate CVC expiry (staging)"}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    disabled={!canReveal || isRevealing}
+                    disabled={!canReveal || isRevealing || isExpiring}
                     title={missingPublicKey ? "Paste your public key first" : undefined}
                     onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState)}
                     className="inline-flex items-center gap-2 rounded-md bg-[#05B959] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#049d4c] disabled:cursor-not-allowed disabled:opacity-50"

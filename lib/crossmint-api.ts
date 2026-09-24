@@ -6,6 +6,7 @@
 import {
   createNewOrderIntent as createNewOrderIntentAction,
   deleteOrderIntent as deleteOrderIntentAction,
+  expireCardCvc as expireCardCvcAction,
   fetchAgenticTokenCredentials as fetchAgenticTokenCredentialsAction,
   fetchAllData as fetchAllDataAction,
   fetchEncryptedCardCredentials as fetchEncryptedCardCredentialsAction,
@@ -68,6 +69,9 @@ export const fetchPaymentMethods = (jwt: string): Promise<PaymentMethodResponse[
 
 export const removePaymentMethod = (jwt: string, paymentMethodId: string): Promise<void> =>
   unwrap(removePaymentMethodAction(jwt, paymentMethodId));
+
+export const expireCardCvc = (jwt: string, paymentMethodId: string): Promise<void> =>
+  unwrap(expireCardCvcAction(jwt, paymentMethodId));
 
 export const fetchRegistration = (jwt: string, paymentMethodId: string): Promise<OrderIntentRegistration | null> =>
   unwrap(fetchRegistrationAction(jwt, paymentMethodId));

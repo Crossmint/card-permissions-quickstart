@@ -158,6 +158,19 @@ function explainCall(trace: ApiTrace): Explained {
     return { step, important: true, title: "Remove the saved card", facts: [], rails: [], error };
   }
 
+  if (trace.path === "/cvc-recollection/expire") {
+    return {
+      step: 3,
+      important: true,
+      title: "Simulate CVC expiry. Staging-only test call: Crossmint ages the card's CVC clock out, as if 24 hours had passed.",
+      facts: trace.ok
+        ? ["The encrypted-card rail now reads pending_cvc_recollection and a mint returns 409 ORDER_INTENT_CVC_RECOLLECTION_REQUIRED until the CVC is re-entered."]
+        : [],
+      rails: [],
+      error,
+    };
+  }
+
   // ── Step 3: credentials ──
   if (trace.path.endsWith("/credentials")) {
     const railName: RailName = req?.rail === "encrypted-card" || req?.rail === "spt" ? req.rail : "agentic-token";
@@ -240,6 +253,16 @@ function explainCall(trace: ApiTrace): Explained {
       title: stillPending
         ? "Re-read the allowance after CVC recollection. The rail is still pending; the vault write may not have landed yet."
         : "Re-read the allowance after CVC recollection. The encrypted-card rail is active again.",
+      facts: intentFacts(intent, rails),
+      rails,
+      error,
+    };
+  }
+  if (trace.context === "cvc-expired") {
+    return {
+      step: 3,
+      important: true,
+      title: "Re-read the allowance after simulating CVC expiry. The encrypted-card rail is pending_cvc_recollection.",
       facts: intentFacts(intent, rails),
       rails,
       error,
