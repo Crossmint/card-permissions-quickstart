@@ -38,6 +38,7 @@ const pemClass = `${inputClass} font-mono text-[11px] leading-snug resize-y`;
 // public key and returns a JWE. Decrypt is a separate step with the private key.
 type KeyState = { publicPem: string; privatePem: string; decryptError: string };
 const DEFAULT_KEY_STATE: KeyState = { publicPem: "", privatePem: "", decryptError: "" };
+type EncryptionMode = "generated" | "custom";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -80,9 +81,11 @@ export function RevealCardDetails({
   const [networkBusinessProfile, setNetworkBusinessProfile] = useState("");
   const [revealingOrderIntentId, setRevealingOrderIntentId] = useState<string | null>(null);
   const [credentialsByOrderIntentId, setCredentialsByOrderIntentId] = useState<Record<string, RevealedCredentials>>({});
+  const [encryptedJweByOrderIntentId, setEncryptedJweByOrderIntentId] = useState<Record<string, string>>({});
   // Keyed by orderIntentId so a failure shows under the allowance it belongs to.
   const [errorByOrderIntentId, setErrorByOrderIntentId] = useState<Record<string, string>>({});
   const [keyStateByOrderIntentId, setKeyStateByOrderIntentId] = useState<Record<string, KeyState>>({});
+  const [encryptionModeByOrderIntentId, setEncryptionModeByOrderIntentId] = useState<Record<string, EncryptionMode>>({});
   const [decryptingOrderIntentId, setDecryptingOrderIntentId] = useState<string | null>(null);
   // Allowances whose last mint was refused with ORDER_INTENT_CVC_RECOLLECTION_REQUIRED.
   const [cvcRefusedOrderIntentIds, setCvcRefusedOrderIntentIds] = useState<ReadonlySet<string>>(new Set());
@@ -91,6 +94,7 @@ export function RevealCardDetails({
   // most recently started read may update the parent, so an older snapshot cannot
   // overwrite a newer one.
   const readSeqByOrderIntentId = useRef<Record<string, number>>({});
+  const decryptGeneration = useRef<Record<string, number>>({});
 
   const refreshAllowance = async (orderIntentId: string, context?: TraceContext) => {
     if (!onUpdated) return;
@@ -115,6 +119,7 @@ export function RevealCardDetails({
     });
 
   const hideDetails = (orderIntentId: string) => {
+    decryptGeneration.current[orderIntentId] = (decryptGeneration.current[orderIntentId] ?? 0) + 1;
     setCredentialsByOrderIntentId((current) => {
       const next = { ...current };
       delete next[orderIntentId];
@@ -131,7 +136,7 @@ export function RevealCardDetails({
 
   const revealDetails = async (
     orderIntent: OrderIntentResponse,
-    options: { rail: RailName; amount?: string; merchant?: Merchant; networkBusinessProfile?: string; publicPem?: string },
+    options: { rail: RailName; amount?: string; merchant?: Merchant; networkBusinessProfile?: string; publicPem?: string; autoDecryptPrivatePem?: string },
   ) => {
     setError(orderIntent.orderIntentId, "");
     setRevealingOrderIntentId(orderIntent.orderIntentId);
@@ -139,7 +144,15 @@ export function RevealCardDetails({
       let publicKey: RsaPublicJwk | undefined;
       if (options.publicPem !== undefined) publicKey = await importRsaPublicKeyPem(options.publicPem);
       const credentials = await revealCardCredentials(getJwt(), orderIntent, { ...options, publicKey });
+      // Retain the successful response even if local decryption fails.
       setCredentialsByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials }));
+      if (credentials.kind === "jwe") {
+        setEncryptedJweByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: credentials.jwe }));
+      }
+      if (credentials.kind === "jwe" && options.autoDecryptPrivatePem) {
+        // This handler reports local errors beside the existing JWE and never re-mints.
+        await decryptJwe(orderIntent.orderIntentId, credentials.jwe, options.autoDecryptPrivatePem);
+      }
       setExpandedOrderIntentId(null);
       // Minting reserves the amount. Re-read so the balance shown goes down.
       try {
@@ -192,24 +205,35 @@ export function RevealCardDetails({
     }
   };
 
-  // Fill both PEM fields with a fresh keypair so the whole loop can be tried in the app.
-  const generateKeyPair = async (orderIntentId: string) => {
+  const revealEncryptedCard = async (orderIntent: OrderIntentResponse, mode: EncryptionMode, keyState: KeyState) => {
+    if (mode === "custom") {
+      await revealDetails(orderIntent, { rail: "encrypted-card", publicPem: keyState.publicPem });
+      return;
+    }
+
     try {
-      const { publicPem, privatePem } = await generateRsaKeyPairPem();
-      updateKeyState(orderIntentId, { publicPem, privatePem, decryptError: "" });
-      setError(orderIntentId, "");
+      const keys = await generateRsaKeyPairPem();
+      updateKeyState(orderIntent.orderIntentId, { ...keys, decryptError: "" });
+      await revealDetails(orderIntent, {
+        rail: "encrypted-card",
+        publicPem: keys.publicPem,
+        autoDecryptPrivatePem: keys.privatePem,
+      });
     } catch (err) {
-      setError(orderIntentId, err instanceof Error ? err.message : "Failed to generate a keypair");
+      setError(orderIntent.orderIntentId, err instanceof Error ? err.message : "Could not create a temporary encryption key");
     }
   };
 
   // Decrypt the JWE in this tab with the pasted private key. Nothing leaves the browser.
   const decryptJwe = async (orderIntentId: string, jwe: string, privatePem: string) => {
+    const generation = (decryptGeneration.current[orderIntentId] ?? 0) + 1;
+    decryptGeneration.current[orderIntentId] = generation;
     updateKeyState(orderIntentId, { decryptError: "" });
     setDecryptingOrderIntentId(orderIntentId);
     try {
       const privateKey = await importRsaPrivateKeyPem(privatePem);
       const card = await decryptCardJwe(jwe, privateKey);
+      if (decryptGeneration.current[orderIntentId] !== generation) return;
       setCredentialsByOrderIntentId((current) => ({
         ...current,
         [orderIntentId]: {
@@ -274,11 +298,13 @@ export function RevealCardDetails({
           isEncrypted &&
           (selectedRail?.status === "pending_cvc_recollection" || cvcRefusedOrderIntentIds.has(orderIntent.orderIntentId));
         const keyState = keyStateByOrderIntentId[orderIntent.orderIntentId] ?? DEFAULT_KEY_STATE;
+        const encryptedJwe = encryptedJweByOrderIntentId[orderIntent.orderIntentId];
+        const encryptionMode = encryptionModeByOrderIntentId[orderIntent.orderIntentId] ?? "generated";
         const needsMerchant = !orderIntent.merchant;
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
         const exhausted = isExhausted(orderIntent);
         const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
-        const missingPublicKey = isEncrypted && keyState.publicPem.trim() === "";
+        const missingPublicKey = isEncrypted && encryptionMode === "custom" && keyState.publicPem.trim() === "";
         const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey && !needsCvc;
         const isDecrypting = decryptingOrderIntentId === orderIntent.orderIntentId;
         const isExpiring = expiringOrderIntentId === orderIntent.orderIntentId;
@@ -310,10 +336,10 @@ export function RevealCardDetails({
                     <EyeOff className="size-3.5" />
                     Hide details
                   </button>
-                ) : (
+                ) : isEncrypted ? null : (
                   <button
                     type="button"
-                    disabled={!canReveal || isRevealing}
+                    disabled={!canReveal || isRevealing || isExpiring}
                     title={
                       canReveal
                         ? undefined
@@ -325,13 +351,6 @@ export function RevealCardDetails({
                     }
                     onClick={() => {
                       if (!selectedRail) return;
-                      if (isEncrypted) {
-                        void revealDetails(orderIntent, {
-                          rail: selectedRail.rail,
-                          publicPem: keyState.publicPem,
-                        });
-                        return;
-                      }
                       setExpandedOrderIntentId(isExpanded ? null : orderIntent.orderIntentId);
                       setAmount(orderIntent.amount.available);
                       setError(orderIntent.orderIntentId, "");
@@ -391,55 +410,73 @@ export function RevealCardDetails({
             )}
 
             {isEncrypted && !needsCvc && !exhausted && !credentials && (
-              <div className="p-4 space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <label className="text-xs font-medium text-[#00150d]/60">Your RSA public key (PEM, 2048-bit)</label>
-                  <div className="flex items-center gap-3">
-                    {!IS_PRODUCTION && (
-                      <button
-                        type="button"
-                        onClick={() => void simulateCvcExpiry(orderIntent)}
-                        disabled={isExpiring || isRevealing}
-                        title="Staging only. Ages the saved CVC out so this rail needs recollection, as it does 24 hours after the card was saved."
-                        className="inline-flex items-center gap-1 text-xs text-[#9A6700] hover:text-[#7a5200] underline underline-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        {isExpiring ? <Loader2 className="size-3 animate-spin" /> : <FlaskConical className="size-3" />}
-                        Simulate CVC expiry
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void generateKeyPair(orderIntent.orderIntentId)}
-                      className="inline-flex items-center gap-1 text-xs text-[#05B959] hover:text-[#049d4c] underline underline-offset-2"
-                    >
-                      <KeyRound className="size-3" />
-                      Generate a keypair
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  value={keyState.publicPem}
-                  onChange={(event) => updateKeyState(orderIntent.orderIntentId, { publicPem: event.target.value })}
-                  placeholder={"-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"}
-                  rows={5}
-                  spellCheck={false}
-                  className={pemClass}
-                />
-                <p className="text-[11px] text-[#00150d]/50">
-                  Reveal sends this key to Crossmint and returns the card encrypted to it. You decrypt it in the next step.
-                </p>
-                {keyState.privatePem && (
-                  <div className="rounded-md bg-[#F6F6F6] px-3 py-2 space-y-1.5">
-                    <div className="flex items-center justify-between gap-3 text-[11px] text-[#00150d]/60">
-                      <span>Generated private key. It stays in this tab and is prefilled for the decrypt step.</span>
-                      <CopyButton text={keyState.privatePem} label="Copy" />
-                    </div>
-                    <pre className="max-h-20 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-snug text-[#00150d]/70">
-                      {keyState.privatePem}
-                    </pre>
+              <div className="space-y-3 p-4">
+                <fieldset className="space-y-2">
+                  <legend className="mb-2 text-xs font-medium text-[#00150d]/60">How should the card be encrypted?</legend>
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${encryptionMode === "generated" ? "border-[#05B959] bg-[#F2FBF6]" : "border-[rgba(0,0,0,0.1)] hover:bg-[#F6F6F6]"}`}>
+                    <input
+                      type="radio"
+                      name={`encryption-mode-${orderIntent.orderIntentId}`}
+                      checked={encryptionMode === "generated"}
+                      onChange={() => setEncryptionModeByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: "generated" }))}
+                      className="mt-0.5 accent-[#05B959]"
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-[#00150d]">Generate a temporary key</span>
+                      <span className="block text-xs leading-5 text-[#00150d]/55">Fastest. The card is decrypted automatically and the private key never leaves this tab.</span>
+                    </span>
+                  </label>
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${encryptionMode === "custom" ? "border-[#05B959] bg-[#F2FBF6]" : "border-[rgba(0,0,0,0.1)] hover:bg-[#F6F6F6]"}`}>
+                    <input
+                      type="radio"
+                      name={`encryption-mode-${orderIntent.orderIntentId}`}
+                      checked={encryptionMode === "custom"}
+                      onChange={() => setEncryptionModeByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: "custom" }))}
+                      className="mt-0.5 accent-[#05B959]"
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-[#00150d]">Use my own public key</span>
+                      <span className="block text-xs leading-5 text-[#00150d]/55">For testing a backend integration or decrypting elsewhere.</span>
+                    </span>
+                  </label>
+                </fieldset>
+
+                {encryptionMode === "custom" && (
+                  <div className="space-y-2">
+                    <label className="block text-xs font-medium text-[#00150d]/60">Public key (PEM, RSA 2048-bit)</label>
+                    <textarea
+                      value={keyState.publicPem}
+                      onChange={(event) => updateKeyState(orderIntent.orderIntentId, { publicPem: event.target.value, privatePem: "" })}
+                      placeholder={"-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"}
+                      rows={5}
+                      spellCheck={false}
+                      className={pemClass}
+                    />
+                    <p className="text-[11px] text-[#00150d]/50">Crossmint encrypts the response to this key. Keep the matching private key available to decrypt it.</p>
                   </div>
                 )}
+
                 {error && revealingOrderIntentId === null && <p className="text-xs text-red-600 break-words">{error}</p>}
+                <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
+                  {!IS_PRODUCTION && (
+                    <button type="button" onClick={() => void simulateCvcExpiry(orderIntent)} disabled={isExpiring || isRevealing} className="inline-flex items-center gap-1 text-xs text-[#9A6700] underline underline-offset-2 disabled:opacity-50">
+                      {isExpiring ? <Loader2 className="size-3 animate-spin" /> : <FlaskConical className="size-3" />}
+                      {isExpiring ? "Simulating…" : "Simulate CVC expiry (staging)"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={!canReveal || isRevealing || isExpiring}
+                    title={missingPublicKey ? "Paste your public key first" : undefined}
+                    onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState)}
+                    className="inline-flex items-center gap-2 rounded-md bg-[#05B959] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#049d4c] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <LockKeyhole className="size-3.5" />}
+                    {isRevealing
+                      ? encryptionMode === "generated" ? "Encrypting and decrypting…" : "Encrypting card…"
+                      : encryptionMode === "generated" ? "Reveal and decrypt card" : "Get encrypted card"}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -632,12 +669,30 @@ export function RevealCardDetails({
                       </div>
                     </div>
                     {credentials.rail === "encrypted-card" && (
-                      <div className="flex items-center gap-1.5 text-[11px] text-[#00150d]/45">
-                        <LockKeyhole className="size-3 text-[#05B959]" />
-                        {selectedRail?.rail === "encrypted-card"
-                          ? "Delivered as a JWE and decrypted in this tab with your private key."
-                          : "Delivered as a JWE and decrypted with a one-time key that never left this tab."}
-                      </div>
+                      <>
+                        <div className="flex items-center gap-1.5 text-[11px] text-[#00150d]/45">
+                          <LockKeyhole className="size-3 text-[#05B959]" />
+                          {selectedRail?.rail === "encrypted-card"
+                            ? "Delivered as a JWE and decrypted in this tab with your private key."
+                            : "Delivered as a JWE and decrypted with a one-time key that never left this tab."}
+                        </div>
+                        {encryptionMode === "generated" && encryptedJwe && (
+                          <details className="rounded-lg border border-[rgba(0,0,0,0.08)] px-3 py-2 text-xs text-[#00150d]/60">
+                            <summary className="cursor-pointer font-medium text-[#00150d]/70">View encryption details</summary>
+                            <div className="mt-3 space-y-3">
+                              <div>
+                                <div className="mb-1 flex items-center justify-between"><span>Encrypted response</span><CopyButton text={encryptedJwe} label="Copy JWE" /></div>
+                                <pre className="max-h-20 overflow-y-auto whitespace-pre-wrap break-all rounded-md bg-[#F6F6F6] p-2 font-mono text-[10px] leading-snug">{encryptedJwe}</pre>
+                              </div>
+                              <div>
+                                <div className="mb-1 flex items-center justify-between"><span>Public key</span><CopyButton text={keyState.publicPem} label="Copy" /></div>
+                                <pre className="max-h-20 overflow-y-auto whitespace-pre-wrap break-all rounded-md bg-[#F6F6F6] p-2 font-mono text-[10px] leading-snug">{keyState.publicPem}</pre>
+                              </div>
+                              <p className="text-[11px] leading-4">RSA-OAEP-256 + A256GCM · the private key remained in this tab.</p>
+                            </div>
+                          </details>
+                        )}
+                      </>
                     )}
                   </>
                 )}

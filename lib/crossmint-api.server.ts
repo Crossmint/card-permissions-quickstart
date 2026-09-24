@@ -31,7 +31,7 @@ import type {
 } from "@/lib/crossmint-types";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { headers } from "next/headers";
-import { CROSSMINT_API_KEY as API_KEY, CROSSMINT_BASE_URL as BASE_URL } from "@/lib/crossmint-env";
+import { CROSSMINT_API_KEY as API_KEY, CROSSMINT_BASE_URL as BASE_URL, IS_PRODUCTION } from "@/lib/crossmint-env";
 import { redactBody, redactHeaders, type ApiTrace, type HttpMethod } from "@/lib/api-trace";
 
 export type ActionResult<T> = { data: T; traces: ApiTrace[] };
@@ -252,6 +252,7 @@ export async function removePaymentMethod(jwt: string, paymentMethodId: string):
  */
 export async function expireCardCvc(jwt: string, paymentMethodId: string): Promise<ActionResult<void>> {
   return traced(async () => {
+    if (IS_PRODUCTION) throw new Error("CVC expiry simulation is only available in staging.");
     const out = await crossmintFetch("POST", "/cvc-recollection/expire", jwt, { paymentMethodId });
     if (!out.ok) throw apiError("Failed to expire the card's CVC", out);
   });
