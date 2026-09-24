@@ -95,7 +95,8 @@ export function isRevealable(intent: OrderIntentResponse): boolean {
 
 /** Preserve an explicit active selection, including while bank verification is pending. */
 export function resolveAllowanceSelection(intents: OrderIntentResponse[], selectedId: string | null): string | null {
-  if (intents.some((intent) => intent.orderIntentId === selectedId && intent.status === "active")) return selectedId;
+  if (intents.some((intent) => intent.orderIntentId === selectedId && intent.status === "active" &&
+    (isRevealable(intent) || pendingVerificationRails(intent).length > 0))) return selectedId;
   return intents.find(isUsable)?.orderIntentId ?? intents.find(isRevealable)?.orderIntentId ?? null;
 }
 

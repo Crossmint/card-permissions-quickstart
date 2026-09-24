@@ -38,4 +38,10 @@ describe("allowance selection across steps", () => {
     expect(resolveAllowanceSelection([allowance("remaining")], "deleted")).toBe("remaining");
     expect(resolveAllowanceSelection([], "deleted")).toBeNull();
   });
+
+  it("falls back when the selected allowance has only failed rails", () => {
+    const failed = allowance("failed", { rails: [{ rail: "encrypted-card", status: "error", error: { code: "UNAVAILABLE" }, credentialFormats: ["card"] }] });
+    expect(resolveAllowanceSelection([failed, allowance("ready")], "failed")).toBe("ready");
+    expect(resolveAllowanceSelection([failed], "failed")).toBeNull();
+  });
 });

@@ -92,6 +92,7 @@ export function RevealCardDetails({
   // most recently started read may update the parent, so an older snapshot cannot
   // overwrite a newer one.
   const readSeqByOrderIntentId = useRef<Record<string, number>>({});
+  const decryptGeneration = useRef<Record<string, number>>({});
 
   const refreshAllowance = async (orderIntentId: string, context?: TraceContext) => {
     if (!onUpdated) return;
@@ -116,6 +117,7 @@ export function RevealCardDetails({
     });
 
   const hideDetails = (orderIntentId: string) => {
+    decryptGeneration.current[orderIntentId] = (decryptGeneration.current[orderIntentId] ?? 0) + 1;
     setCredentialsByOrderIntentId((current) => {
       const next = { ...current };
       delete next[orderIntentId];
@@ -206,11 +208,14 @@ export function RevealCardDetails({
 
   // Decrypt the JWE in this tab with the pasted private key. Nothing leaves the browser.
   const decryptJwe = async (orderIntentId: string, jwe: string, privatePem: string) => {
+    const generation = (decryptGeneration.current[orderIntentId] ?? 0) + 1;
+    decryptGeneration.current[orderIntentId] = generation;
     updateKeyState(orderIntentId, { decryptError: "" });
     setDecryptingOrderIntentId(orderIntentId);
     try {
       const privateKey = await importRsaPrivateKeyPem(privatePem);
       const card = await decryptCardJwe(jwe, privateKey);
+      if (decryptGeneration.current[orderIntentId] !== generation) return;
       setCredentialsByOrderIntentId((current) => ({
         ...current,
         [orderIntentId]: {
