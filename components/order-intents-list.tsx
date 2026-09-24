@@ -303,11 +303,12 @@ export function OrderIntentsList({
   const sorted = [...orderIntents].sort((a, b) => Number(isUsable(b)) - Number(isUsable(a)));
   const selectable = sorted.filter((intent) => isUsable(intent) || pendingCvcRecollectionRail(intent));
   const selected = selectable.find((intent) => intent.orderIntentId === selectedOrderIntentId) ?? selectable[0];
-  const needsAction = sorted.filter((intent) => !selectable.includes(intent));
+  const selectorIntents = sorted.filter((intent) => selectable.includes(intent) || intent.status === "expired");
+  const needsAction = sorted.filter((intent) => intent.status !== "expired" && !selectable.includes(intent));
 
   return (
     <div className="space-y-4">
-      {selectable.length > 0 && (
+      {selectorIntents.length > 0 && (
         <div ref={selectorRef} className="relative">
           <label id="allowance-selector-label" className="mb-1.5 block text-xs font-medium text-[#00150d]/60">
             Allowance to use
@@ -323,7 +324,7 @@ export function OrderIntentsList({
             >
               <CreditCard className="size-5 shrink-0 text-[#2377FF]" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-[#00150d]">{selected?.description || "Agent card allowance"}</div>
+                <div className="truncate text-sm font-medium text-[#00150d]">{selected?.description || "Select an active allowance"}</div>
                 {selected && (
                   <div className="truncate text-xs text-[#00150d]/55">
                     {allowanceLimit(selected)}{selected.merchant ? ` · ${selected.merchant.name}` : ""}
@@ -342,30 +343,41 @@ export function OrderIntentsList({
               className="absolute left-0 right-10 top-full z-50 mt-1 overflow-hidden rounded-lg border border-[rgba(0,0,0,0.1)] bg-white shadow-[0_8px_24px_rgba(0,21,13,0.12)]"
             >
               <div className="max-h-72 overflow-y-auto py-1">
-                {selectable.map((orderIntent) => {
+                {selectorIntents.map((orderIntent) => {
                   const isSelected = orderIntent.orderIntentId === selected?.orderIntentId;
+                  const expired = orderIntent.status === "expired";
                   return (
-                    <button
+                    <div
                       key={orderIntent.orderIntentId}
-                      type="button"
                       role="option"
                       aria-selected={isSelected}
-                      onClick={() => {
-                        onSelectOrderIntent(orderIntent.orderIntentId);
-                        setSelectorOpen(false);
-                      }}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[#F6F6F6] focus-visible:bg-[#F6F6F6] focus-visible:outline-none"
+                      aria-disabled={expired}
+                      className={`flex items-center gap-1 pr-2 ${expired ? "bg-black/[0.02]" : "hover:bg-[#F6F6F6]"}`}
                     >
-                      <CreditCard className="size-5 shrink-0 text-[#2377FF]" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-[#00150d]">{orderIntent.description || "Agent card allowance"}</div>
-                        <div className="truncate text-xs text-[#00150d]/55">
-                          {allowanceLimit(orderIntent)}{orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
+                      <button
+                        type="button"
+                        disabled={expired}
+                        onClick={() => {
+                          onSelectOrderIntent(orderIntent.orderIntentId);
+                          setSelectorOpen(false);
+                        }}
+                        className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left focus-visible:outline-none disabled:cursor-default"
+                      >
+                        <CreditCard className={`size-5 shrink-0 ${expired ? "text-[#00150d]/35" : "text-[#2377FF]"}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className={`flex items-center gap-2 truncate text-sm font-medium ${expired ? "text-[#00150d]/55" : "text-[#00150d]"}`}>
+                            <span className="truncate">{orderIntent.description || "Agent card allowance"}</span>
+                            {expired && <span className="shrink-0 rounded-md bg-black/[0.06] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#00150d]/50">Expired</span>}
+                          </div>
+                          <div className="truncate text-xs text-[#00150d]/55">
+                            {allowanceLimit(orderIntent)}{orderIntent.merchant ? ` · ${orderIntent.merchant.name}` : ""}
+                          </div>
+                          <div className="mt-2"><RailRow rails={orderIntent.rails} muted={expired || isExhausted(orderIntent)} /></div>
                         </div>
-                        <div className="mt-2"><RailRow rails={orderIntent.rails} muted={isExhausted(orderIntent)} /></div>
-                      </div>
-                      {isSelected && <Check className="size-4 shrink-0 text-[#05B959]" />}
-                    </button>
+                        {isSelected && <Check className="size-4 shrink-0 text-[#05B959]" />}
+                      </button>
+                      {expired && <DotsMenu onDelete={() => onCancel(orderIntent)} deleteLabel="Delete expired allowance" />}
+                    </div>
                   );
                 })}
               </div>
