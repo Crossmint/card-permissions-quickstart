@@ -3,18 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, CreditCard, Plus, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { OrderIntentResponse } from "@/lib/crossmint-types";
-import { fetchOrderIntent } from "@/lib/crossmint-api";
-import { availableAmount, isRevealable, isUsable, needsVerification, pendingAgenticRail, pendingCvcRecollectionRail, railErrorCode, toVerifiableOrderIntent } from "@/lib/rails";
+import { availableAmount, isRevealable, isUsable, needsVerification, pendingCvcRecollectionRail, pendingVerificationRails, railErrorCode, railLabel, toVerifiableOrderIntent } from "@/lib/rails";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
 import { verificationAppearance } from "@/lib/verification-appearance";
 import { DotsMenu } from "./dots-menu";
 import { RailRow } from "./rail-badge";
-
-// Backoff between re-reads after a successful bank verification: about 6 s total.
-const CONFIRM_DELAYS_MS = [1000, 1500, 2000, 1500];
-
-// Error names @basis-theory/web-agentic throws when the user backs out of the ceremony.
-const USER_CANCELLED_ERRORS = new Set(["VerificationCancelledError", "PopupClosedError"]);
+import { useAllowanceVerification } from "./use-allowance-verification";
 
 /** Remaining balance, always as "X of Y USD left", so the wallet is seen going down. */
 export function allowanceLimit(orderIntent: OrderIntentResponse) {
@@ -58,6 +52,14 @@ function StatusAside({ orderIntent }: { orderIntent: OrderIntentResponse }) {
   );
 }
 
+/** Names the rails waiting on the bank, and whether the allowance can already mint elsewhere. */
+export function pendingMessage(orderIntent: OrderIntentResponse) {
+  const labels = pendingVerificationRails(orderIntent).map(railLabel).join(", ");
+  return isUsable(orderIntent)
+    ? `${labels} needs bank verification before it can mint. The other active rails work meanwhile.`
+    : `Not usable yet. Verify ${labels} with your bank before the agent can pay.`;
+}
+
 function showRails(orderIntent: OrderIntentResponse) {
   return orderIntent.status === "active" && orderIntent.rails.some((rail) => rail.status !== "error");
 }
@@ -77,49 +79,12 @@ function OrderIntentItem({
   selected: boolean;
   onSelect?: () => void;
 }) {
-  const [verifying, setVerifying] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const { verifying, confirming, error, notice, setError, start, finish, fail, checkAgain } = useAllowanceVerification({
+    orderIntent,
+    getJwt,
+    onUpdated,
+  });
   const [cancelling, setCancelling] = useState(false);
-  const [error, setError] = useState("");
-
-  // The provider may take a moment to flip the rail from pending_verification
-  // to active after the SDK reports success. Re-read with a short backoff.
-  const finishVerification = async () => {
-    setVerifying(false);
-    setConfirming(true);
-    setError("");
-    try {
-      let latest = orderIntent;
-      for (const delay of CONFIRM_DELAYS_MS) {
-        latest = await fetchOrderIntent(getJwt(), orderIntent.orderIntentId);
-        if (!pendingAgenticRail(latest)) break;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-      onUpdated(latest);
-      if (pendingAgenticRail(latest)) {
-        setError("Verified with the bank, but Crossmint still reports pending_verification. Check again in a moment.");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not confirm the verification");
-    } finally {
-      setConfirming(false);
-    }
-  };
-
-  // Re-read the intent on demand, without opening the bank flow again.
-  const checkAgain = async () => {
-    setConfirming(true);
-    setError("");
-    try {
-      const latest = await fetchOrderIntent(getJwt(), orderIntent.orderIntentId);
-      onUpdated(latest);
-      if (pendingAgenticRail(latest)) setError("Still pending_verification. Try again in a moment, or verify again.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not read the allowance");
-    } finally {
-      setConfirming(false);
-    }
-  };
 
   const handleCancel = async () => {
     setCancelling(true);
@@ -171,7 +136,7 @@ function OrderIntentItem({
           {pending && (
             <button
               type="button"
-              onClick={() => { setError(""); setVerifying(true); }}
+              onClick={start}
               disabled={verifying || confirming}
               className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
@@ -217,7 +182,7 @@ function OrderIntentItem({
               ? "Confirming with Crossmint..."
               : verifying
                 ? "Complete the verification with your bank..."
-                : error || "Not usable yet. Verify this allowance with your bank before the agent can pay."}
+                : error || notice || pendingMessage(orderIntent)}
           </p>
         )}
       </div>
@@ -227,17 +192,8 @@ function OrderIntentItem({
           orderIntent={verifiable}
           displayName="Card Permissions Quickstart"
           appearance={verificationAppearance}
-          onVerificationComplete={() => void finishVerification()}
-          onVerificationError={(err) => {
-            // Forwarded to the dev server log by Next, so the real cause is visible there.
-            console.error("Verification error:", err);
-            setVerifying(false);
-            // The user closing or cancelling the bank prompt is not a failure.
-            // @basis-theory/web-agentic names these errors; match on the name, not the text.
-            if (err instanceof Error && USER_CANCELLED_ERRORS.has(err.name)) return;
-            const message = err instanceof Error ? err.message : "";
-            setError(message || "Verification failed. Please try again.");
-          }}
+          onVerificationComplete={() => void finish()}
+          onVerificationError={fail}
         />
       )}
     </div>

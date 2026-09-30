@@ -24,13 +24,13 @@ import type { TraceContext } from "@/lib/api-trace";
 import type {
   AgenticTokenCredentialResponse,
   CreateOrderIntentInput,
+  EncryptedCardCredentialInput,
   EncryptedCardCredentialResponse,
   Merchant,
   OrderIntentRegistration,
   OrderIntentResponse,
   PaymentMethodResponse,
   RailProvider,
-  RsaPublicJwk,
   SptCredentialInput,
   SptCredentialResponse,
 } from "@/lib/crossmint-types";
@@ -97,8 +97,8 @@ export const fetchAgenticTokenCredentials = (
 export const fetchEncryptedCardCredentials = (
   jwt: string,
   orderIntentId: string,
-  publicKey: RsaPublicJwk,
-): Promise<EncryptedCardCredentialResponse> => unwrap(fetchEncryptedCardCredentialsAction(jwt, orderIntentId, publicKey));
+  input: EncryptedCardCredentialInput,
+): Promise<EncryptedCardCredentialResponse> => unwrap(fetchEncryptedCardCredentialsAction(jwt, orderIntentId, input));
 
 export const fetchSptCredentials = (
   jwt: string,

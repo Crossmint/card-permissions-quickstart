@@ -19,13 +19,13 @@
 import type {
   AgenticTokenCredentialResponse,
   CreateOrderIntentInput,
+  EncryptedCardCredentialInput,
   EncryptedCardCredentialResponse,
   Merchant,
   OrderIntentRegistration,
   OrderIntentResponse,
   PaymentMethodResponse,
   RailProvider,
-  RsaPublicJwk,
   SptCredentialInput,
   SptCredentialResponse,
 } from "@/lib/crossmint-types";
@@ -388,10 +388,15 @@ export async function fetchAgenticTokenCredentials(
 export async function fetchEncryptedCardCredentials(
   jwt: string,
   orderIntentId: string,
-  publicKey: RsaPublicJwk,
+  input: EncryptedCardCredentialInput,
 ): Promise<ActionResult<EncryptedCardCredentialResponse>> {
   return traced(async () => {
-    const body = { rail: "encrypted-card" as const, credential: { format: "card" as const, publicKey } };
+    const body = {
+      rail: "encrypted-card" as const,
+      amount: input.amount,
+      credential: { format: "card" as const, publicKey: input.publicKey },
+      ...(input.merchant ? { merchant: input.merchant } : {}),
+    };
     const out = await crossmintFetch("POST", `/order-intents/${orderIntentId}/credentials`, jwt, body);
     if (!out.ok) throw apiError("Failed to fetch encrypted card credentials", out);
     return out.body as EncryptedCardCredentialResponse;
