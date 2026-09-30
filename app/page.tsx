@@ -234,7 +234,7 @@ export default function Page() {
   };
 
   // A card backs allowances once its registration has settled: rails enabled,
-  // or all in error (minting then falls back to encrypted-card). Pending does not count.
+  // or all in error (allowances then mint only through encrypted-card). Pending does not count.
   const registeredCards = savedCards.filter((card) => isRegistrationSettled(registrations[card.paymentMethodId]));
   const hasRegisteredCard = registeredCards.length > 0;
   // The card picked in step 01 is the default for step 02, when it is registered.

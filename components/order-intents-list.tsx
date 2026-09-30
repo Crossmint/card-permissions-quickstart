@@ -200,6 +200,68 @@ function OrderIntentItem({
   );
 }
 
+function SelectedPendingVerification({
+  orderIntent,
+  getJwt,
+  onUpdated,
+}: {
+  orderIntent: OrderIntentResponse;
+  getJwt: () => string;
+  onUpdated: (orderIntent: OrderIntentResponse) => void;
+}) {
+  const { verifying, confirming, error, notice, start, finish, fail, checkAgain } = useAllowanceVerification({
+    orderIntent,
+    getJwt,
+    onUpdated,
+  });
+  const verifiable = toVerifiableOrderIntent(orderIntent);
+  if (verifiable == null) {
+    return null;
+  }
+
+  return (
+    <div className={`rounded-lg px-4 py-3 border ${error ? "bg-[#FDF2F2] border-[#F4C7C7]" : "bg-[#FFF8E1] border-[#E6C87A]"}`}>
+      <div className="flex items-center gap-3">
+        <p className={`min-w-0 flex-1 text-xs leading-4 ${error ? "text-[#B42318]" : "text-[#9A6700]"}`}>
+          {confirming
+            ? "Confirming with Crossmint..."
+            : verifying
+              ? "Complete the verification with your bank..."
+              : error || notice || pendingMessage(orderIntent)}
+        </p>
+        {/pending_verification/.test(error) && (
+          <button
+            type="button"
+            onClick={() => void checkAgain()}
+            disabled={verifying || confirming}
+            className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap text-xs font-medium px-3 py-1.5 rounded-[4px] border border-[rgba(0,0,0,0.15)] text-[#00150d] hover:bg-black/[0.03] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          >
+            Check again
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={start}
+          disabled={verifying || confirming}
+          className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap text-xs font-medium px-3 py-1.5 rounded-[4px] bg-[#05B959] text-white hover:bg-[#049d4c] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          {verifying || confirming ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
+          {error ? "Try again" : "Verify"}
+        </button>
+      </div>
+      {verifying && (
+        <OrderIntentVerification
+          orderIntent={verifiable}
+          displayName="Card Permissions Quickstart"
+          appearance={verificationAppearance}
+          onVerificationComplete={() => void finish()}
+          onVerificationError={fail}
+        />
+      )}
+    </div>
+  );
+}
+
 export function OrderIntentsList({
   orderIntents,
   loading,
@@ -366,6 +428,15 @@ export function OrderIntentsList({
             </div>
           )}
         </div>
+      )}
+
+      {selected && selectable.includes(selected) && needsVerification(selected) && (
+        <SelectedPendingVerification
+          key={selected.orderIntentId}
+          orderIntent={selected}
+          getJwt={getJwt}
+          onUpdated={onUpdated}
+        />
       )}
 
       {cancelError && <p role="alert" className="text-xs text-red-600">{cancelError}</p>}
