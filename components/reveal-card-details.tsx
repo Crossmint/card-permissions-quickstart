@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
 import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
-import { type Merchant, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
+import { type Merchant, type OrderIntentRail, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { decryptCardJwe, generateRsaKeyPairPem, importRsaPrivateKeyPem, importRsaPublicKeyPem } from "@/lib/encrypted-card";
 import { errors as joseErrors } from "jose";
@@ -68,12 +68,12 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 // here, so the user does not have to go back to find it.
 function PendingVerificationPanel({
   orderIntent,
-  railName,
+  rail,
   getJwt,
   onUpdated,
 }: {
   orderIntent: OrderIntentResponse;
-  railName: string;
+  rail: OrderIntentRail;
   getJwt: () => string;
   onUpdated?: (orderIntent: OrderIntentResponse) => void;
 }) {
@@ -82,7 +82,9 @@ function PendingVerificationPanel({
     getJwt,
     onUpdated,
   });
-  const verifiable = toVerifiableOrderIntent(orderIntent);
+  // The SDK ceremony verifies agentic-token rails only; spt finishes on Stripe's side.
+  const verifiable = rail.rail === "agentic-token" ? toVerifiableOrderIntent(orderIntent) : null;
+  const railName = railLabel(rail);
 
   return (
     <div className="space-y-3 p-4">
@@ -95,7 +97,7 @@ function PendingVerificationPanel({
               notice ||
               (verifiable
                 ? `${railName} is pending_verification. The bank must approve this allowance before the rail can mint. Registering the card does not do this; every allowance is verified once.`
-                : `${railName} is pending_verification on the provider's side. Check again in a moment.`)}
+                : `${railName} is pending_verification on Stripe's side; there is no user step here. Check again in a moment.`)}
       </p>
       <div className="flex items-center justify-end gap-2">
         {(!verifiable || /pending_verification/.test(error)) && (
@@ -457,7 +459,7 @@ export function RevealCardDetails({
             {isPendingVerification && selectedRail && !exhausted && !credentials && (
               <PendingVerificationPanel
                 orderIntent={orderIntent}
-                railName={railLabel(selectedRail)}
+                rail={selectedRail}
                 getJwt={getJwt}
                 onUpdated={(latest) => {
                   readSeqByOrderIntentId.current[orderIntent.orderIntentId] =

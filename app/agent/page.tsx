@@ -17,9 +17,9 @@ import {
   Sparkles,
 } from "lucide-react";
 import { fetchAllData } from "@/lib/crossmint-api";
-import type { AgentCardCredentials, OrderIntentResponse } from "@/lib/crossmint-types";
+import type { AgentCardCredentials, OrderIntentResponse, RailName } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
-import { activeCardRail, availableAmount, clampDelay, isUsable, railLabel } from "@/lib/rails";
+import { activeCardRail, activeCardRails, availableAmount, clampDelay, isUsable, railLabel } from "@/lib/rails";
 import { CROSSMINT_ENVIRONMENT } from "@/lib/crossmint-env";
 
 type AgentStage = "idle" | "planning" | "checking" | "securing" | "ready" | "error";
@@ -146,8 +146,12 @@ export default function AgentDemoPage() {
   // Pick the first allowance with a rail that can mint a card.
   const activeAllowance = orderIntents.find(isUsable);
   const activeRail = activeAllowance ? activeCardRail(activeAllowance) : undefined;
+  const canRetryOnEncryptedCard =
+    stage === "error" &&
+    activeRail?.rail === "agentic-token" &&
+    Boolean(activeAllowance && activeCardRails(activeAllowance).some((rail) => rail.rail === "encrypted-card"));
 
-  const runAgent = async () => {
+  const runAgent = async (rail?: RailName) => {
     if (!activeAllowance || stage === "planning" || stage === "checking" || stage === "securing") {
       return;
     }
@@ -171,6 +175,7 @@ export default function AgentDemoPage() {
       }
       const result = await revealCardCredentials(getJwt(), activeAllowance, {
         amount: Number(MOCK_TOTAL_VALUE).toFixed(2),
+        rail,
         // Used only when the allowance has no merchant of its own.
         merchant: { name: "Whole Foods", url: "https://www.wholefoodsmarket.com", countryCode: "US" },
       });
@@ -336,6 +341,15 @@ export default function AgentDemoPage() {
                 </div>
                 <div className="rounded-2xl rounded-tl-sm bg-red-50 px-4 py-3 text-sm text-red-700">
                   I couldn’t secure the card. {runError}
+                  {canRetryOnEncryptedCard && (
+                    <button
+                      type="button"
+                      onClick={() => void runAgent("encrypted-card")}
+                      className="mt-2 block text-xs font-medium text-red-800 underline underline-offset-2 hover:text-red-900"
+                    >
+                      Retry on encrypted-card
+                    </button>
+                  )}
                 </div>
               </div>
             )}

@@ -56,7 +56,7 @@ function StatusAside({ orderIntent }: { orderIntent: OrderIntentResponse }) {
 export function pendingMessage(orderIntent: OrderIntentResponse) {
   const labels = pendingVerificationRails(orderIntent).map(railLabel).join(", ");
   return isUsable(orderIntent)
-    ? `${labels} needs bank verification before it can mint. The other active rails work meanwhile.`
+    ? `${labels} needs verification before it can mint. The other active rails work meanwhile.`
     : `Not usable yet. Verify ${labels} with your bank before the agent can pay.`;
 }
 
