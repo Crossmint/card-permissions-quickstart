@@ -23,7 +23,7 @@ Give agents permission to pay with a user's card through Crossmint's Agentic Pay
 - Register a card for agent payments and read which rails it supports
 - Create an allowance (order intent) with an amount, an expiry, and an optional merchant
 - Verify an allowance with the user's bank when the network rail asks for it
-- Retrieve card details through the Visa/Mastercard rail, encrypted-card, or Stripe Shared Payment Token rail. If the selected rail fails to mint, the app reveals the saved card on `encrypted-card`.
+- Retrieve card details through the Visa/Mastercard rail, encrypted-card, or Stripe Shared Payment Token rail. If the selected rail fails to mint, the app shows the API error and offers `encrypted-card` as an explicit choice.
 
 ## How rails work
 An order intent exposes one or more **rails**. Each rail is an independent way to spend the same allowance:
@@ -34,7 +34,7 @@ An order intent exposes one or more **rails**. Each rail is an independent way t
 | `spt` | Stripe merchants | Verification may be required | Stripe Shared Payment Token identifier |
 | `encrypted-card` | Any eligible saved card | CVC re-entry once the saved CVC ages out | The saved card as a JWE, decrypted in the browser |
 
-The app prefers `agentic-token` when it is active and lets you pick another active rail. If that mint fails and the allowance still has balance, it immediately retries on `encrypted-card`. The `spt` rail needs a Stripe Network Business Profile ID. See `lib/rails.ts` and `lib/card-credentials.ts`.
+Step 3 lists every rail on the allowance. Active rails mint. A rail in `pending_verification` is listed as `needs verification`; selecting it opens the bank verification in place, the same one Step 2 runs. Registering a card never verifies an allowance: even the `4242` staging card needs this once per allowance before `agentic-token` can mint. A failed mint is shown with its error, and the user can switch to `encrypted-card` from there. Every rail, `encrypted-card` included, reserves the charge amount from the allowance. The `spt` rail needs a Stripe Network Business Profile ID. See `lib/rails.ts` and `lib/card-credentials.ts`.
 
 For the encrypted-card rail the browser generates a one-time RSA-OAEP-256 keypair with WebCrypto, sends only the public JWK, and decrypts the returned JWE with `jose`. The private key and the card number never reach this app's server. See `lib/encrypted-card.ts`.
 
@@ -45,7 +45,7 @@ Rail status is a read-time snapshot: the API does not expose when the CVC ages o
 
 `pnpm test` runs the unit tests for the 409 recovery path and the timeline explanations.
 
-When you select `encrypted-card` in Step 3, reveal and decrypt are two steps. Paste an RSA 2048 public key in PEM (`BEGIN PUBLIC KEY`, SPKI), or click "Generate a keypair" to fill one in. "Reveal details" sends that key and shows the returned JWE, not the card. Then paste the matching private key (`BEGIN PRIVATE KEY`, PKCS#8) under "Decrypt in this browser" and click "Decrypt" to read the card locally. The generated private key is prefilled there. The fallback after a failed mint uses a one-time key and decrypts at once.
+When you select `encrypted-card` in Step 3, reveal and decrypt are two steps. Paste an RSA 2048 public key in PEM (`BEGIN PUBLIC KEY`, SPKI), or click "Generate a keypair" to fill one in. "Reveal details" sends that key and shows the returned JWE, not the card. Then paste the matching private key (`BEGIN PRIVATE KEY`, PKCS#8) under "Decrypt in this browser" and click "Decrypt" to read the card locally. The generated private key is prefilled there.
 
 ## See the API calls
 The app shows one step at a time. The column on the right lists the Crossmint API calls that step makes, as they happen: method, path, status, a one-line explanation, the rail involved, and the raw request and response. Only the calls that tell the story appear; list and poll reads stay in the server log.
@@ -123,4 +123,4 @@ To go to production:
 3. Add every origin the app runs on to the key's allowed origins in the console, for example `http://localhost:3000` and your deploy URL. Production rejects client-side keys from other origins. The server actions forward the browser `Origin` header for this check. See `lib/crossmint-api.ts`.
 4. Use a live Stytch project and add your production URL to its redirect URLs.
 5. Register your Stytch project in the Crossmint production console under "3P Auth providers".
-6. In production only real cards work. The staging test cards are rejected and the test card hint is hidden. If a network rail fails to mint, the app falls back to `encrypted-card`.
+6. In production only real cards work. The staging test cards are rejected and the test card hint is hidden. If a network rail fails to mint, the app shows the error and lets you switch to `encrypted-card`.

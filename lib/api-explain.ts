@@ -104,7 +104,7 @@ function intentFacts(intent: OrderIntentResponse | undefined, rails: RailFact[])
     facts.push("spt is pending_verification. Stripe must finish verification before the agent can use it.");
   }
   if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "active")) {
-    facts.push("encrypted-card is the fallback if another rail fails to mint.");
+    facts.push("encrypted-card can mint if another rail fails. The user picks it in Step 3.");
   }
   if (rails.some((rail) => rail.rail === "encrypted-card" && rail.status === "pending_cvc_recollection")) {
     facts.push("encrypted-card is pending_cvc_recollection: the saved CVC aged out. The user re-enters it with CrossmintCvcRecollection; the app never sees it.");
@@ -173,7 +173,6 @@ function explainCall(trace: ApiTrace): Explained {
           ? [
               "Credential issued by encrypted-card as a JWE. Only the matching private key can decrypt it. The server never sees the number.",
               "When you select this rail, the app sends your public key and shows the JWE. Decrypt it with your private key in the app.",
-              "As fallback after another rail failed to mint, the app uses a one-time key and decrypts the JWE here.",
             ]
           : cvcRequired
             ? ["409 ORDER_INTENT_CVC_RECOLLECTION_REQUIRED: the saved CVC aged out. Re-enter it with CrossmintCvcRecollection, then retry this call."]

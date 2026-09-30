@@ -87,7 +87,7 @@ function RailDetail({
           : registration.rails
               .filter((rail) => rail.status === "error")
               .map((rail) => `${rail.rail} is unavailable (${rail.error?.code}). `)}
-        If a mint on those rails fails, the app reveals the saved card on encrypted-card.
+        If a mint on those rails fails, you can choose encrypted-card in Step 3 to reveal the saved card instead.
       </p>
       {pending && (
         <div className="flex items-center justify-end">

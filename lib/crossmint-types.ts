@@ -171,10 +171,19 @@ export type SptCredentialInput = {
 // 409 `code` on POST /credentials for encrypted-card when the CVC clock has elapsed.
 export const CVC_RECOLLECTION_REQUIRED_CODE = "ORDER_INTENT_CVC_RECOLLECTION_REQUIRED";
 
+export type EncryptedCardCredentialInput = {
+  amount: { value: string; currency: string };
+  merchant?: Merchant;
+  publicKey: RsaPublicJwk;
+};
+
 export type EncryptedCardCredentialResponse = {
+  id: string;
   rail: "encrypted-card";
+  amount: { value: string; currency: string };
   // Compact JWE (RSA-OAEP-256 + A256GCM). Decrypt with the matching private key.
   credential: { format: "card"; value: string };
+  expiresAt: string;
 };
 
 // Normalized credentials, whatever rail produced them. Never persist these.

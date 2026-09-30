@@ -40,7 +40,8 @@ function badgeProvider(
   return undefined;
 }
 
-function railHint(rail: RailName): string {
+function railHint(rail: RailName, status?: Status): string {
+  if (status === "pending_verification") return "Needs bank verification before it can mint";
   if (rail === "encrypted-card") return "Saved card, decrypted in this tab";
   if (rail === "spt") return "Stripe Shared Payment Token";
   return "One-time card from the network";
@@ -201,7 +202,7 @@ export function RailSelect({
               >
                 <div className="flex-1 min-w-0 space-y-1">
                   <RailBadge rail={item.rail} provider={provider} status={item.status} />
-                  <div className="text-[11px] text-[#00150d]/50">{railHint(item.rail)}</div>
+                  <div className="text-[11px] text-[#00150d]/50">{railHint(item.rail, item.status)}</div>
                 </div>
                 <span className="w-4 shrink-0">{isSelected && <Check className="size-4 text-[#05B959]" />}</span>
               </button>

@@ -1,20 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole } from "lucide-react";
-import { type Merchant, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
+import { Check, Copy, CreditCard, Eye, EyeOff, KeyRound, Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
+import { OrderIntentVerification } from "@crossmint/client-sdk-react-ui";
+import { type Merchant, type OrderIntentRail, type OrderIntentResponse, type RailName, type RevealedCredentials, type RsaPublicJwk } from "@/lib/crossmint-types";
 import { revealCardCredentials } from "@/lib/card-credentials";
 import { decryptCardJwe, generateRsaKeyPairPem, importRsaPrivateKeyPem, importRsaPublicKeyPem } from "@/lib/encrypted-card";
 import { errors as joseErrors } from "jose";
-import { activeCardRails, activeSptRail, clampDelay, pendingCvcRecollectionRail } from "@/lib/rails";
+import { activeCardRails, activeSptRail, clampDelay, pendingCvcRecollectionRail, pendingVerificationRails, railLabel, toVerifiableOrderIntent } from "@/lib/rails";
+import { verificationAppearance } from "@/lib/verification-appearance";
 import { RailBadge, RailRow, RailSelect } from "./rail-badge";
 import { allowanceLimit, ExhaustedPill, isExhausted } from "./order-intents-list";
 import { CvcRecollection } from "./cvc-recollection";
 import { fetchOrderIntent } from "@/lib/crossmint-api";
 import type { TraceContext } from "@/lib/api-trace";
 import { describeMintFailure } from "@/lib/mint-failure";
+import { useAllowanceVerification } from "./use-allowance-verification";
 
-// The encrypted-card rail returns no expiry. Hide those details after a fixed time.
+// Hide details after a fixed time when the credential has no readable expiry.
 const FALLBACK_HIDE_MS = 5 * 60 * 1000;
 
 function formatCardNumber(number: string) {
@@ -32,6 +35,7 @@ function hideAt(credentials: RevealedCredentials) {
 const inputClass =
   "w-full rounded-md border border-[rgba(0,0,0,0.1)] px-3 py-2 text-sm outline-none focus:border-[#05B959] focus:ring-1 focus:ring-[#05B959]/20";
 const pemClass = `${inputClass} font-mono text-[11px] leading-snug resize-y`;
+const VALID_AMOUNT = /^\d+(\.\d{1,2})?$/;
 
 // Per allowance: the RSA keys for the encrypted-card rail. Reveal sends the
 // public key and returns a JWE. Decrypt is a separate step with the private key.
@@ -58,6 +62,86 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       {copied ? "Copied" : label}
     </button>
   );
+}
+
+// A rail waiting on the bank cannot mint. Run the same verification as Step 2
+// here, so the user does not have to go back to find it.
+function PendingVerificationPanel({
+  orderIntent,
+  rail,
+  getJwt,
+  onUpdated,
+}: {
+  orderIntent: OrderIntentResponse;
+  rail: OrderIntentRail;
+  getJwt: () => string;
+  onUpdated?: (orderIntent: OrderIntentResponse) => void;
+}) {
+  const { verifying, confirming, error, notice, start, finish, fail, checkAgain } = useAllowanceVerification({
+    orderIntent,
+    getJwt,
+    onUpdated,
+  });
+  // The SDK ceremony verifies agentic-token rails only; spt finishes on Stripe's side.
+  const verifiable = rail.rail === "agentic-token" ? toVerifiableOrderIntent(orderIntent) : null;
+  const railName = railLabel(rail);
+
+  return (
+    <div className="space-y-3 p-4">
+      <p className={`text-xs leading-5 ${error ? "text-[#B42318]" : "text-[#9A6700]"}`}>
+        {confirming
+          ? "Confirming with Crossmint..."
+          : verifying
+            ? "Complete the verification with your bank..."
+            : error ||
+              notice ||
+              (verifiable
+                ? `${railName} is pending_verification. The bank must approve this allowance before the rail can mint. Registering the card does not do this; every allowance is verified once.`
+                : `${railName} is pending_verification on Stripe's side; there is no user step here. Check again in a moment.`)}
+      </p>
+      <div className="flex items-center justify-end gap-2">
+        {(!verifiable || /pending_verification/.test(error)) && (
+          <button
+            type="button"
+            onClick={() => void checkAgain()}
+            disabled={verifying || confirming}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[rgba(0,0,0,0.15)] px-3 py-1.5 text-xs font-medium text-[#00150d] transition-colors hover:bg-black/[0.03] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Check again
+          </button>
+        )}
+        {verifiable && (
+          <button
+            type="button"
+            onClick={start}
+            disabled={verifying || confirming}
+            className="inline-flex items-center gap-1.5 rounded-md bg-[#05B959] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#049d4c] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {verifying || confirming ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
+            {error || notice ? "Verify again" : "Verify with bank"}
+          </button>
+        )}
+      </div>
+      {verifying && verifiable && (
+        <OrderIntentVerification
+          orderIntent={verifiable}
+          displayName="Card Permissions Quickstart"
+          appearance={verificationAppearance}
+          onVerificationComplete={() => void finish()}
+          onVerificationError={fail}
+        />
+      )}
+    </div>
+  );
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 export function RevealCardDetails({
@@ -187,9 +271,15 @@ export function RevealCardDetails({
     }
   };
 
-  const revealEncryptedCard = async (orderIntent: OrderIntentResponse, mode: EncryptionMode, keyState: KeyState) => {
+  const revealEncryptedCard = async (
+    orderIntent: OrderIntentResponse,
+    mode: EncryptionMode,
+    keyState: KeyState,
+    chargeAmount: string,
+    merchant: Merchant | undefined,
+  ) => {
     if (mode === "custom") {
-      await revealDetails(orderIntent, { rail: "encrypted-card", publicPem: keyState.publicPem });
+      await revealDetails(orderIntent, { rail: "encrypted-card", amount: chargeAmount, merchant, publicPem: keyState.publicPem });
       return;
     }
 
@@ -198,6 +288,8 @@ export function RevealCardDetails({
       updateKeyState(orderIntent.orderIntentId, { ...keys, decryptError: "" });
       await revealDetails(orderIntent, {
         rail: "encrypted-card",
+        amount: chargeAmount,
+        merchant,
         publicPem: keys.publicPem,
         autoDecryptPrivatePem: keys.privatePem,
       });
@@ -225,6 +317,7 @@ export function RevealCardDetails({
           expirationMonth: String(card.expirationMonth),
           expirationYear: String(card.expirationYear),
           cvc: String(card.cvc),
+          expiresAt: current[orderIntentId]?.expiresAt,
         },
       }));
     } catch (err) {
@@ -268,7 +361,9 @@ export function RevealCardDetails({
         const spt = activeSptRail(orderIntent);
         // A rail waiting for its CVC is listed so the user can fix it here, but it cannot mint yet.
         const pendingCvc = pendingCvcRecollectionRail(orderIntent);
-        const options = [...cardRails, ...(pendingCvc ? [pendingCvc] : []), ...(spt ? [spt] : [])];
+        // Listed so a rail waiting on the bank does not look missing. Selecting it opens the verification.
+        const pendingVerification = pendingVerificationRails(orderIntent);
+        const options = [...cardRails, ...(pendingCvc ? [pendingCvc] : []), ...(spt ? [spt] : []), ...pendingVerification];
         if (options.length === 0) return null;
         const selectedRail = options.find((rail) => rail.rail === selectedRailByOrderIntentId[orderIntent.orderIntentId]);
         const credentials = credentialsByOrderIntentId[orderIntent.orderIntentId];
@@ -276,6 +371,8 @@ export function RevealCardDetails({
         const isExpanded = expandedOrderIntentId === orderIntent.orderIntentId;
         const isRevealing = revealingOrderIntentId === orderIntent.orderIntentId;
         const isEncrypted = selectedRail?.rail === "encrypted-card";
+        const isPendingVerification = selectedRail?.status === "pending_verification";
+        const encryptedCardOption = options.find((rail) => rail.rail === "encrypted-card");
         const needsCvc =
           isEncrypted &&
           (selectedRail?.status === "pending_cvc_recollection" || cvcRefusedOrderIntentIds.has(orderIntent.orderIntentId));
@@ -283,12 +380,65 @@ export function RevealCardDetails({
         const encryptedJwe = encryptedJweByOrderIntentId[orderIntent.orderIntentId];
         const encryptionMode = encryptionModeByOrderIntentId[orderIntent.orderIntentId] ?? "generated";
         const needsMerchant = !orderIntent.merchant;
+        const merchant: Merchant | undefined = needsMerchant ? { name: merchantName, url: merchantUrl, countryCode: "US" } : undefined;
+        const missingMerchant = needsMerchant && (merchantName.trim() === "" || !isHttpUrl(merchantUrl));
+        const merchantFields = needsMerchant && (
+          <>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setMerchantName("Whole Foods");
+                  setMerchantUrl("https://www.wholefoodsmarket.com");
+                }}
+                className="text-xs text-[#05B959] hover:text-[#049d4c] underline underline-offset-2"
+              >
+                Fill example merchant
+              </button>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant name</label>
+              <input
+                type="text"
+                value={merchantName}
+                onChange={(event) => setMerchantName(event.target.value)}
+                placeholder="e.g. Whole Foods"
+                required
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant URL</label>
+              <input
+                type="url"
+                value={merchantUrl}
+                onChange={(event) => setMerchantUrl(event.target.value)}
+                placeholder="e.g. https://www.wholefoodsmarket.com"
+                required
+                className={inputClass}
+              />
+            </div>
+          </>
+        );
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
         const exhausted = isExhausted(orderIntent);
         const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
         const missingPublicKey = isEncrypted && encryptionMode === "custom" && keyState.publicPem.trim() === "";
-        const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey && !needsCvc;
+        const canReveal = Boolean(selectedRail) && !exhausted && !missingPublicKey && !needsCvc && !isPendingVerification;
         const isDecrypting = decryptingOrderIntentId === orderIntent.orderIntentId;
+
+        const selectRail = (rail: RailName) => {
+          setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: rail }));
+          const opensOwnPanel = rail === "encrypted-card" || options.find((item) => item.rail === rail)?.status === "pending_verification";
+          if (opensOwnPanel) {
+            setExpandedOrderIntentId((current) => (current === orderIntent.orderIntentId ? null : current));
+          }
+          if (rail === "encrypted-card") {
+            setAmount(orderIntent.amount.available);
+            void refreshBeforeMint(orderIntent.orderIntentId);
+          }
+          setError(orderIntent.orderIntentId, "");
+        };
 
         return (
           <div
@@ -326,6 +476,8 @@ export function RevealCardDetails({
                         ? undefined
                         : needsCvc
                           ? "Enter the card's CVC again first"
+                          : isPendingVerification
+                            ? "Verify this rail with your bank first"
                           : missingPublicKey
                             ? "Paste or generate a public key first"
                             : "Choose a rail first"
@@ -350,14 +502,7 @@ export function RevealCardDetails({
                   <RailSelect
                     rails={options}
                     selected={selectedRail?.rail}
-                    onSelect={(rail) => {
-                      setSelectedRailByOrderIntentId((current) => ({ ...current, [orderIntent.orderIntentId]: rail }));
-                      if (rail === "encrypted-card") {
-                        setExpandedOrderIntentId((current) => (current === orderIntent.orderIntentId ? null : current));
-                        void refreshBeforeMint(orderIntent.orderIntentId);
-                      }
-                      setError(orderIntent.orderIntentId, "");
-                    }}
+                    onSelect={selectRail}
                   />
                 )}
               </div>
@@ -365,6 +510,19 @@ export function RevealCardDetails({
 
             {exhausted && !credentials && (
               <p className="px-4 py-3 text-xs text-[#00150d]/60">Each credential reserves its amount. Create a new allowance to mint another.</p>
+            )}
+
+            {isPendingVerification && selectedRail && !exhausted && !credentials && (
+              <PendingVerificationPanel
+                orderIntent={orderIntent}
+                rail={selectedRail}
+                getJwt={getJwt}
+                onUpdated={(latest) => {
+                  readSeqByOrderIntentId.current[orderIntent.orderIntentId] =
+                    (readSeqByOrderIntentId.current[orderIntent.orderIntentId] ?? 0) + 1;
+                  onUpdated?.(latest);
+                }}
+              />
             )}
 
             {needsCvc && !exhausted && !credentials && (
@@ -392,6 +550,22 @@ export function RevealCardDetails({
 
             {isEncrypted && !needsCvc && !exhausted && !credentials && (
               <div className="space-y-3 p-4">
+                <div>
+                  <label className="text-xs font-medium text-[#00150d]/60 block mb-1">
+                    Charge amount ({orderIntent.amount.currency.toUpperCase()})
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    pattern="^\d+(\.\d{1,2})?$"
+                    value={amount}
+                    onChange={(event) => setAmount(event.target.value)}
+                    required
+                    className={inputClass}
+                  />
+                  <p className="mt-1 text-[11px] text-[#00150d]/50">Reserved from the allowance. {availableLabel} available.</p>
+                </div>
+                {merchantFields}
                 <fieldset className="space-y-2">
                   <legend className="mb-2 text-xs font-medium text-[#00150d]/60">How should the card be encrypted?</legend>
                   <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${encryptionMode === "generated" ? "border-[#05B959] bg-[#F2FBF6]" : "border-[rgba(0,0,0,0.1)] hover:bg-[#F6F6F6]"}`}>
@@ -441,9 +615,17 @@ export function RevealCardDetails({
                 <div className="flex justify-end pt-1">
                   <button
                     type="button"
-                    disabled={!canReveal || isRevealing}
-                    title={missingPublicKey ? "Paste your public key first" : undefined}
-                    onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState)}
+                    disabled={!canReveal || isRevealing || !VALID_AMOUNT.test(amount) || missingMerchant}
+                    title={
+                      missingPublicKey
+                        ? "Paste your public key first"
+                        : !VALID_AMOUNT.test(amount)
+                          ? "Enter a charge amount"
+                          : missingMerchant
+                            ? "Enter the merchant name and a valid URL"
+                            : undefined
+                    }
+                    onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState, amount, merchant)}
                     className="inline-flex items-center gap-2 rounded-md bg-[#05B959] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#049d4c] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <LockKeyhole className="size-3.5" />}
@@ -455,33 +637,19 @@ export function RevealCardDetails({
               </div>
             )}
 
-            {isExpanded && selectedRail && !credentials && !isEncrypted && (
+            {isExpanded && selectedRail && !credentials && !isEncrypted && !isPendingVerification && (
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
                   void revealDetails(orderIntent, {
                     rail: selectedRail.rail,
                     amount,
-                    merchant: needsMerchant ? { name: merchantName, url: merchantUrl, countryCode: "US" } : undefined,
+                    merchant,
                     networkBusinessProfile: selectedRail.rail === "spt" ? networkBusinessProfile : undefined,
                   });
                 }}
                 className="p-4 space-y-3"
               >
-                {needsMerchant && (
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMerchantName("Whole Foods");
-                        setMerchantUrl("https://www.wholefoodsmarket.com");
-                      }}
-                      className="text-xs text-[#05B959] hover:text-[#049d4c] underline underline-offset-2"
-                    >
-                      Fill example merchant
-                    </button>
-                  </div>
-                )}
                 <p className="text-xs text-[#00150d]/60">
                   This amount is reserved from the allowance. {availableLabel} available.
                 </p>
@@ -499,32 +667,7 @@ export function RevealCardDetails({
                     className={inputClass}
                   />
                 </div>
-                {needsMerchant && (
-                  <>
-                    <div>
-                      <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant name</label>
-                      <input
-                        type="text"
-                        value={merchantName}
-                        onChange={(event) => setMerchantName(event.target.value)}
-                        placeholder="e.g. Whole Foods"
-                        required
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant URL</label>
-                      <input
-                        type="url"
-                        value={merchantUrl}
-                        onChange={(event) => setMerchantUrl(event.target.value)}
-                        placeholder="e.g. https://www.wholefoodsmarket.com"
-                        required
-                        className={inputClass}
-                      />
-                    </div>
-                  </>
-                )}
+                {merchantFields}
                 {selectedRail.rail === "spt" && (
                   <div>
                     <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Stripe Network Business Profile ID</label>
@@ -532,6 +675,15 @@ export function RevealCardDetails({
                   </div>
                 )}
                 {error && <p className="text-xs text-red-600 break-words">{error}</p>}
+                {error && encryptedCardOption && (
+                  <button
+                    type="button"
+                    onClick={() => selectRail("encrypted-card")}
+                    className="block text-xs font-medium text-[#1D4ED8] underline underline-offset-2 hover:text-[#1E40AF]"
+                  >
+                    Use encrypted-card instead
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={isRevealing}
@@ -558,9 +710,6 @@ export function RevealCardDetails({
                     }
                     compact
                   />
-                  {credentials.rail === "encrypted-card" && selectedRail && selectedRail.rail !== "encrypted-card" && (
-                    <span>after {selectedRail.rail} failed</span>
-                  )}
                 </div>
                 {credentials.kind === "jwe" ? (
                   <>
@@ -647,7 +796,7 @@ export function RevealCardDetails({
                       <>
                         <div className="flex items-center gap-1.5 text-[11px] text-[#00150d]/45">
                           <LockKeyhole className="size-3 text-[#05B959]" />
-                          {selectedRail?.rail === "encrypted-card"
+                          {encryptionMode === "custom"
                             ? "Delivered as a JWE and decrypted in this tab with your private key."
                             : "Delivered as a JWE and decrypted with a one-time key that never left this tab."}
                         </div>
