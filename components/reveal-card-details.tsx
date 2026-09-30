@@ -135,6 +135,15 @@ function PendingVerificationPanel({
   );
 }
 
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 export function RevealCardDetails({
   orderIntents,
   loading,
@@ -372,7 +381,7 @@ export function RevealCardDetails({
         const encryptionMode = encryptionModeByOrderIntentId[orderIntent.orderIntentId] ?? "generated";
         const needsMerchant = !orderIntent.merchant;
         const merchant: Merchant | undefined = needsMerchant ? { name: merchantName, url: merchantUrl, countryCode: "US" } : undefined;
-        const missingMerchant = needsMerchant && (merchantName.trim() === "" || merchantUrl.trim() === "");
+        const missingMerchant = needsMerchant && (merchantName.trim() === "" || !isHttpUrl(merchantUrl));
         const merchantFields = needsMerchant && (
           <>
             <div className="flex justify-end">
@@ -613,7 +622,7 @@ export function RevealCardDetails({
                         : !VALID_AMOUNT.test(amount)
                           ? "Enter a charge amount"
                           : missingMerchant
-                            ? "Enter the merchant first"
+                            ? "Enter the merchant name and a valid URL"
                             : undefined
                     }
                     onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState, amount, merchant)}
