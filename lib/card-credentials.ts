@@ -89,12 +89,11 @@ export async function revealCardCredentials(
   // A merchant fixed on the allowance is not repeated on credential requests.
   const merchant = orderIntent.merchant ? undefined : options.merchant;
 
-  if (rail.rail === "encrypted-card") {
-    return revealEncryptedCard(jwt, orderIntent.orderIntentId, { amount, merchant, publicKey: options.publicKey });
-  }
-
   if (!orderIntent.merchant && !merchant) {
     throw new Error("This allowance has no merchant. Provide one to mint a card.");
+  }
+  if (rail.rail === "encrypted-card") {
+    return revealEncryptedCard(jwt, orderIntent.orderIntentId, { amount, merchant, publicKey: options.publicKey });
   }
   if (rail.rail === "spt") {
     const networkBusinessProfile = options.networkBusinessProfile;

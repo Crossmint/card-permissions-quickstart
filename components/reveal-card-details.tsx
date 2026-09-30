@@ -262,9 +262,15 @@ export function RevealCardDetails({
     }
   };
 
-  const revealEncryptedCard = async (orderIntent: OrderIntentResponse, mode: EncryptionMode, keyState: KeyState, chargeAmount: string) => {
+  const revealEncryptedCard = async (
+    orderIntent: OrderIntentResponse,
+    mode: EncryptionMode,
+    keyState: KeyState,
+    chargeAmount: string,
+    merchant: Merchant | undefined,
+  ) => {
     if (mode === "custom") {
-      await revealDetails(orderIntent, { rail: "encrypted-card", amount: chargeAmount, publicPem: keyState.publicPem });
+      await revealDetails(orderIntent, { rail: "encrypted-card", amount: chargeAmount, merchant, publicPem: keyState.publicPem });
       return;
     }
 
@@ -274,6 +280,7 @@ export function RevealCardDetails({
       await revealDetails(orderIntent, {
         rail: "encrypted-card",
         amount: chargeAmount,
+        merchant,
         publicPem: keys.publicPem,
         autoDecryptPrivatePem: keys.privatePem,
       });
@@ -364,6 +371,46 @@ export function RevealCardDetails({
         const encryptedJwe = encryptedJweByOrderIntentId[orderIntent.orderIntentId];
         const encryptionMode = encryptionModeByOrderIntentId[orderIntent.orderIntentId] ?? "generated";
         const needsMerchant = !orderIntent.merchant;
+        const merchant: Merchant | undefined = needsMerchant ? { name: merchantName, url: merchantUrl, countryCode: "US" } : undefined;
+        const missingMerchant = needsMerchant && (merchantName.trim() === "" || merchantUrl.trim() === "");
+        const merchantFields = needsMerchant && (
+          <>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setMerchantName("Whole Foods");
+                  setMerchantUrl("https://www.wholefoodsmarket.com");
+                }}
+                className="text-xs text-[#05B959] hover:text-[#049d4c] underline underline-offset-2"
+              >
+                Fill example merchant
+              </button>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant name</label>
+              <input
+                type="text"
+                value={merchantName}
+                onChange={(event) => setMerchantName(event.target.value)}
+                placeholder="e.g. Whole Foods"
+                required
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant URL</label>
+              <input
+                type="url"
+                value={merchantUrl}
+                onChange={(event) => setMerchantUrl(event.target.value)}
+                placeholder="e.g. https://www.wholefoodsmarket.com"
+                required
+                className={inputClass}
+              />
+            </div>
+          </>
+        );
         const error = errorByOrderIntentId[orderIntent.orderIntentId] ?? "";
         const exhausted = isExhausted(orderIntent);
         const availableLabel = `${orderIntent.amount.available} ${orderIntent.amount.currency.toUpperCase()}`;
@@ -509,6 +556,7 @@ export function RevealCardDetails({
                   />
                   <p className="mt-1 text-[11px] text-[#00150d]/50">Reserved from the allowance. {availableLabel} available.</p>
                 </div>
+                {merchantFields}
                 <fieldset className="space-y-2">
                   <legend className="mb-2 text-xs font-medium text-[#00150d]/60">How should the card be encrypted?</legend>
                   <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${encryptionMode === "generated" ? "border-[#05B959] bg-[#F2FBF6]" : "border-[rgba(0,0,0,0.1)] hover:bg-[#F6F6F6]"}`}>
@@ -558,9 +606,17 @@ export function RevealCardDetails({
                 <div className="flex justify-end pt-1">
                   <button
                     type="button"
-                    disabled={!canReveal || isRevealing || !VALID_AMOUNT.test(amount)}
-                    title={missingPublicKey ? "Paste your public key first" : !VALID_AMOUNT.test(amount) ? "Enter a charge amount" : undefined}
-                    onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState, amount)}
+                    disabled={!canReveal || isRevealing || !VALID_AMOUNT.test(amount) || missingMerchant}
+                    title={
+                      missingPublicKey
+                        ? "Paste your public key first"
+                        : !VALID_AMOUNT.test(amount)
+                          ? "Enter a charge amount"
+                          : missingMerchant
+                            ? "Enter the merchant first"
+                            : undefined
+                    }
+                    onClick={() => void revealEncryptedCard(orderIntent, encryptionMode, keyState, amount, merchant)}
                     className="inline-flex items-center gap-2 rounded-md bg-[#05B959] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#049d4c] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <LockKeyhole className="size-3.5" />}
@@ -579,26 +635,12 @@ export function RevealCardDetails({
                   void revealDetails(orderIntent, {
                     rail: selectedRail.rail,
                     amount,
-                    merchant: needsMerchant ? { name: merchantName, url: merchantUrl, countryCode: "US" } : undefined,
+                    merchant,
                     networkBusinessProfile: selectedRail.rail === "spt" ? networkBusinessProfile : undefined,
                   });
                 }}
                 className="p-4 space-y-3"
               >
-                {needsMerchant && (
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMerchantName("Whole Foods");
-                        setMerchantUrl("https://www.wholefoodsmarket.com");
-                      }}
-                      className="text-xs text-[#05B959] hover:text-[#049d4c] underline underline-offset-2"
-                    >
-                      Fill example merchant
-                    </button>
-                  </div>
-                )}
                 <p className="text-xs text-[#00150d]/60">
                   This amount is reserved from the allowance. {availableLabel} available.
                 </p>
@@ -616,32 +658,7 @@ export function RevealCardDetails({
                     className={inputClass}
                   />
                 </div>
-                {needsMerchant && (
-                  <>
-                    <div>
-                      <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant name</label>
-                      <input
-                        type="text"
-                        value={merchantName}
-                        onChange={(event) => setMerchantName(event.target.value)}
-                        placeholder="e.g. Whole Foods"
-                        required
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Merchant URL</label>
-                      <input
-                        type="url"
-                        value={merchantUrl}
-                        onChange={(event) => setMerchantUrl(event.target.value)}
-                        placeholder="e.g. https://www.wholefoodsmarket.com"
-                        required
-                        className={inputClass}
-                      />
-                    </div>
-                  </>
-                )}
+                {merchantFields}
                 {selectedRail.rail === "spt" && (
                   <div>
                     <label className="text-xs font-medium text-[#00150d]/60 block mb-1">Stripe Network Business Profile ID</label>

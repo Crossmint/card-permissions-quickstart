@@ -54,11 +54,18 @@ describe("revealCardCredentials", () => {
         credential: { format: "card", value: "jwe" }, expiresAt: "2099-01-01T00:05:00Z",
       });
 
-      await revealCardCredentials("jwt", allowance(), { rail: "encrypted-card", publicKey: PUBLIC_KEY });
+      await revealCardCredentials("jwt", allowance({ merchant: MERCHANT }), { rail: "encrypted-card", publicKey: PUBLIC_KEY });
 
       expect(api.fetchEncryptedCardCredentials).toHaveBeenCalledWith("jwt", "oi_1", {
         amount: { value: "15.00", currency: "usd" }, merchant: undefined, publicKey: PUBLIC_KEY,
       });
+    });
+
+    test("refuses to mint when neither the allowance nor the request names a merchant", async () => {
+      await expect(
+        revealCardCredentials("jwt", allowance(), { rail: "encrypted-card", amount: "5.00", publicKey: PUBLIC_KEY }),
+      ).rejects.toThrow("This allowance has no merchant");
+      expect(api.fetchEncryptedCardCredentials).not.toHaveBeenCalled();
     });
   });
 
