@@ -317,7 +317,7 @@ export default function Page() {
         {/* Step index */}
         <aside className="hidden lg:block sticky top-[88px] self-start pt-1">
           <h1 className="font-[family-name:var(--font-heading)] font-medium text-[28px] leading-none tracking-[-0.84px] text-[#00150d] mb-8">
-            Card Permissions
+            Agent Cards
           </h1>
           <nav className="border-l border-[rgba(0,0,0,0.1)] flex flex-col gap-2">
             <SidebarItem active={currentStep === 1} completed={hasRegisteredCard} locked={false} label="Save credit card" onClick={() => goTo(1)} />

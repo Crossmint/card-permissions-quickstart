@@ -56,9 +56,9 @@ export function LandingPage({ children }: { children: React.ReactNode }) {
         {/* Content */}
         <div className="relative z-10 flex flex-col gap-12 text-white">
           <div className="flex flex-col gap-4">
-            <h1 className="text-6xl font-bold">Card Permissions for Agents</h1>
+            <h1 className="text-6xl font-bold">Agent Cards</h1>
             <p className="text-white/60 text-lg">
-              Get started with the Card Permissions Quickstart.{" "}
+              Get started with the Agent Cards Quickstart.{" "}
               <a
                 href="https://github.com/Crossmint/card-permissions-quickstart"
                 style={{ color: "white" }}
@@ -108,10 +108,10 @@ export function LandingPage({ children }: { children: React.ReactNode }) {
       <div className="flex flex-col items-center justify-center min-h-dvh lg:min-h-0 bg-gray-50 px-6 py-12 col-span-1 lg:col-span-3">
         <div className="lg:hidden mb-8 text-center">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Card Permissions for Agents
+            Agent Cards
           </h1>
           <p className="text-gray-600">
-            Get started with the Card Permissions Quickstart
+            Get started with the Agent Cards Quickstart
           </p>
         </div>
 
