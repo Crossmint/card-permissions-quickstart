@@ -12,7 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@crossmint/client-sdk-react-ui": "4.7.0",
+    "@crossmint/client-sdk-react-ui": "5.0.0",
     "@stytch/nextjs": "^22.0.5",
     "jose": "6.2.12",
     "lucide-react": "^1.8.0",

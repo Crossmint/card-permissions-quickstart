@@ -24,6 +24,7 @@ const REASON_TEXT: Record<CvcRecollectionError["reason"], string> = {
   "invalid-configuration": "This card cannot recollect its CVC. Check that it is a saved card of the signed-in user.",
   "invalid-credentials": "Your session was rejected. Sign in again and retry.",
   "provider-error": "The card vault rejected the CVC.",
+  "verification-refused": "Crossmint could not confirm the new CVC. Check it and try again.",
   unknown: "Something went wrong while saving the CVC.",
 };
 
