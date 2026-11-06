@@ -25,6 +25,15 @@ Give agents permission to pay with a user's card through Crossmint's Agentic Pay
 - Verify an allowance with the user's bank when the network rail asks for it
 - Retrieve card details through the Visa/Mastercard rail, encrypted-card, or Stripe Shared Payment Token rail. If the selected rail fails to mint, the app shows the API error and offers `encrypted-card` as an explicit choice.
 
+## Save a card
+The app uses `CrossmintPaymentMethodManagement` from `@crossmint/client-sdk-react-ui` 5. Crossmint hosts the card form in an iframe, so card numbers never reach this app. Since SDK 5 the component renders no submit button:
+- The app renders its own **Save card** button and calls `ref.current.submit()`.
+- The button stays disabled until `onReady` fires, while `onChange` reports `complete: false`, and while a submit runs.
+- The app shows the `message` of an `invalid`, `failed` or `unavailable` result under the button. The iframe shows only field errors.
+- A `saved` result also calls `onPaymentMethodSelected`, and the flow continues to Step 2.
+
+See `components/save-card-section.tsx` and the [save card guide](https://docs.crossmint.com/agents/payment-methods/cards/save-card).
+
 ## How rails work
 An order intent exposes one or more **rails**. Each rail is an independent way to spend the same allowance:
 
