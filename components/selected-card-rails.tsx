@@ -1,9 +1,10 @@
 "use client";
 
-// Step 01: pick a saved card and see which rails it can use.
+// Step 01: the rails of the card picked in CrossmintPaymentMethodManagement.
+// The component lists and saves cards; it does not show rails.
 
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronsUpDown, CreditCard, Info, Loader2, Plus } from "lucide-react";
+import { CreditCard, Info, Loader2 } from "lucide-react";
 import { DotsMenu } from "./dots-menu";
 import { RailRow } from "./rail-badge";
 import type { OrderIntentRegistration, PaymentMethodResponse } from "@/lib/crossmint-types";
@@ -106,81 +107,31 @@ function RailDetail({
   );
 }
 
-/** Badge shown next to each card in the dropdown. */
-function CardRailTag({ registration }: { registration: OrderIntentRegistration | null }) {
-  if (!registration) return <span className="text-[11px] text-[#00150d]/40">Not registered</span>;
-  return <RailRow rails={displayRails(registration)} />;
-}
-
-export function SavedCardsList({
-  cards,
-  loading,
+export function SelectedCardRails({
+  card,
+  registration,
   getJwt,
   email,
-  registrations,
-  selectedCardId,
-  onSelectCard,
   onDeleteCard,
-  onAddCard,
   onRegistrationComplete,
 }: {
-  cards: PaymentMethodResponse[];
-  loading: boolean;
+  card: PaymentMethodResponse;
+  registration: OrderIntentRegistration | null;
   getJwt: () => string;
   email: string;
-  registrations: Record<string, OrderIntentRegistration | null>;
-  selectedCardId: string | null;
-  onSelectCard: (paymentMethodId: string) => void;
   onDeleteCard: (paymentMethodId: string) => Promise<void>;
-  onAddCard?: () => void;
   onRegistrationComplete?: () => void | Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState("");
   const [checking, setChecking] = useState(false);
   const [checkMessage, setCheckMessage] = useState("");
-  const selectorRef = useRef<HTMLDivElement>(null);
+  // The card this panel already tried to register on its own, so a failure does not loop.
+  const autoRegistered = useRef<string | null>(null);
 
-  useEffect(() => {
-    const handler = (event: MouseEvent) => {
-      if (selectorRef.current && !selectorRef.current.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-3 rounded-lg bg-[#F6F6F6] px-4 py-3 animate-pulse">
-        <div className="size-5 rounded bg-black/[0.08] shrink-0" />
-        <div className="space-y-1.5 flex-1">
-          <div className="h-3.5 w-32 rounded bg-black/[0.08]" />
-          <div className="h-3 w-24 rounded bg-black/[0.05]" />
-        </div>
-      </div>
-    );
-  }
-
-  if (cards.length === 0) {
-    if (!onAddCard) return null;
-    return (
-      <button onClick={onAddCard} className="flex items-center gap-4 h-[35px] group">
-        <div className="bg-white border-[1.5px] border-[rgba(0,0,0,0.1)] rounded-[6px] w-[56px] h-[35px] flex items-center justify-center group-hover:border-[#05B959]/40 transition-colors shrink-0">
-          <Plus className="size-5 text-[#00150d] group-hover:text-[#05B959] transition-colors" />
-        </div>
-        <span className="font-medium text-base text-[#00150d] group-hover:text-[#05B959] transition-colors">
-          Add credit card
-        </span>
-      </button>
-    );
-  }
-
-  const selected = cards.find((card) => card.paymentMethodId === selectedCardId) ?? cards[0];
-  const pmId = selected.paymentMethodId;
-  const registration = registrations[pmId] ?? null;
-  const expiry = cardExpiry(selected);
+  const pmId = card.paymentMethodId;
+  const expiry = cardExpiry(card);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -214,6 +165,17 @@ export function SavedCardsList({
     setRegistering(false);
   };
 
+  // A picked card that is not registered yet registers right away. "Register card" retries a failure.
+  useEffect(() => {
+    if (registration || autoRegistered.current === pmId) {
+      return;
+    }
+    autoRegistered.current = pmId;
+    void handleRegister();
+    // handleRegister reads the current card; it runs once per picked card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pmId, registration]);
+
   // Re-poll a pending registration on demand. Does not repeat the PUT.
   const handleCheckAgain = async () => {
     if (!registration) return;
@@ -238,67 +200,18 @@ export function SavedCardsList({
 
   return (
     <div className="space-y-3">
-      {/* Card selector + delete */}
+      {/* Selected card + delete */}
       <div className="flex items-center gap-2">
-        <div className="relative flex-1 min-w-0" ref={selectorRef}>
-          <button
-            type="button"
-            onClick={() => setOpen((value) => !value)}
-            aria-haspopup="listbox"
-            aria-expanded={open}
-            className="w-full flex items-center gap-3 rounded-lg bg-[#F6F6F6] px-4 py-3 text-left hover:bg-[#efefef] transition-colors"
-          >
-            <CreditCard className="size-5 text-[#05B959] shrink-0" />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-[#00150d]">{cardTitle(selected)}</div>
-              {expiry && <div className="text-xs text-[#00150d]/50">{expiry}</div>}
-            </div>
-            {cards.length > 1 && <span className="text-[11px] text-[#00150d]/40">{cards.length} cards</span>}
-            <ChevronsUpDown className="size-4 text-[#00150d] shrink-0" />
-          </button>
-
-          {open && (
-            <div role="listbox" className="absolute left-0 right-0 top-full mt-1 bg-white rounded-[8px] border border-[rgba(0,0,0,0.1)] shadow-md py-1 z-50">
-              {cards.map((card) => {
-                const isSelected = card.paymentMethodId === pmId;
-                const exp = cardExpiry(card);
-                return (
-                  <button
-                    key={card.paymentMethodId}
-                    type="button"
-                    role="option"
-                    aria-selected={isSelected}
-                    onClick={() => { onSelectCard(card.paymentMethodId); setOpen(false); }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#F6F6F6] transition-colors text-left"
-                  >
-                    <CreditCard className="size-4 text-[#05B959] shrink-0 self-start mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-[#00150d]">{cardTitle(card)}</div>
-                      {exp && <div className="text-xs text-[#00150d]/50">{exp}</div>}
-                      <div className="mt-1.5">
-                        <CardRailTag registration={registrations[card.paymentMethodId] ?? null} />
-                      </div>
-                    </div>
-                    <span className="w-4 shrink-0">{isSelected && <Check className="size-4 text-[#05B959]" />}</span>
-                  </button>
-                );
-              })}
-              {onAddCard && (
-                <button
-                  type="button"
-                  onClick={() => { setOpen(false); onAddCard(); }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 border-t border-[rgba(0,0,0,0.06)] hover:bg-[#F6F6F6] transition-colors text-left"
-                >
-                  <Plus className="size-4 text-[#00150d] shrink-0" />
-                  <span className="text-sm font-medium text-[#00150d]">Add credit card</span>
-                </button>
-              )}
-            </div>
-          )}
+        <div className="flex-1 min-w-0 flex items-center gap-3 rounded-lg bg-[#F6F6F6] px-4 py-3">
+          <CreditCard className="size-5 text-[#05B959] shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-[#00150d]">{cardTitle(card)}</div>
+            {expiry && <div className="text-xs text-[#00150d]/50">{expiry}</div>}
+          </div>
         </div>
         {deleting
           ? <Loader2 className="size-3.5 animate-spin text-[#00150d]/40" />
-          : <DotsMenu onDelete={handleDelete} deleteLabel="Delete card" />}
+          : <DotsMenu onDelete={handleDelete} deleteLabel="Remove card" />}
       </div>
 
       {/* Selected card: its rail, or the one-time registration */}

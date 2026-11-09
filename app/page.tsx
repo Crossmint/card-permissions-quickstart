@@ -9,8 +9,8 @@ import type { OrderIntentRegistration, OrderIntentResponse, PaymentMethodRespons
 import { deleteOrderIntent, fetchAllData, fetchOrderIntent, removePaymentMethod } from "@/lib/crossmint-api";
 import { isRevealable, resolveAllowanceSelection, isRegistrationSettled, isUsable } from "@/lib/rails";
 import { IS_PRODUCTION } from "@/lib/crossmint-env";
-import { SavedCardsList } from "@/components/saved-cards-list";
-import { SaveCardSection } from "@/components/save-card-section";
+import { SelectedCardRails } from "@/components/selected-card-rails";
+import { CardPickerSection } from "@/components/card-picker-section";
 import { IssueCardPermission } from "@/components/issue-card-permission";
 import { OrderIntentsList } from "@/components/order-intents-list";
 import { RevealCardDetails } from "@/components/reveal-card-details";
@@ -151,7 +151,8 @@ export default function Page() {
   const [savedCards, setSavedCards] = useState<PaymentMethodResponse[]>([]);
   const [orderIntents, setOrderIntents] = useState<OrderIntentResponse[]>([]);
   const [registrations, setRegistrations] = useState<Record<string, OrderIntentRegistration | null>>({});
-  const [showSaveCard, setShowSaveCard] = useState(false);
+  // Bumped after a card is removed, so the card picker reloads its saved-card list.
+  const [cardPickerVersion, setCardPickerVersion] = useState(0);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedAllowanceId, setSelectedAllowanceId] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<StepNumber>(1);
@@ -186,11 +187,14 @@ export default function Page() {
     }
   }, [isInitialized, user, fetchData]);
 
-  const handleCardSaved = (paymentMethodId: string) => {
-    setShowSaveCard(false);
-    setSelectedCardId(paymentMethodId);
-    fetchData();
-  };
+  // The card picker picked a saved card or saved a new one. Re-read the cards so the new one has its registration entry.
+  const handleCardSelected = useCallback(
+    (paymentMethodId: string) => {
+      setSelectedCardId(paymentMethodId);
+      void fetchData();
+    },
+    [fetchData],
+  );
 
   const handleDeleteCard = async (paymentMethodId: string) => {
     const jwt = getJwt();
@@ -203,6 +207,7 @@ export default function Page() {
     await removePaymentMethod(jwt, paymentMethodId);
     if (selectedCardId === paymentMethodId) setSelectedCardId(null);
     if (issuingForCard === paymentMethodId) setIssuingForCard(null);
+    setCardPickerVersion((version) => version + 1);
     await fetchData();
   };
 
@@ -238,7 +243,8 @@ export default function Page() {
   const registeredCards = savedCards.filter((card) => isRegistrationSettled(registrations[card.paymentMethodId]));
   const hasRegisteredCard = registeredCards.length > 0;
   // The card picked in step 01 is the default for step 02, when it is registered.
-  const selectedCard = savedCards.find((card) => card.paymentMethodId === selectedCardId) ?? savedCards[0];
+  const pickedCard = savedCards.find((card) => card.paymentMethodId === selectedCardId);
+  const selectedCard = pickedCard ?? savedCards[0];
   const defaultIssueCard = selectedCard && isRegistrationSettled(registrations[selectedCard.paymentMethodId]) ? selectedCard : registeredCards[0];
   const savedCardIds = new Set(savedCards.map((card) => card.paymentMethodId));
   const visibleOrderIntents = orderIntents.filter(
@@ -357,29 +363,21 @@ export default function Page() {
                 subtitle="Your cards are encrypted and stored securely. Register each card once so agents can pay with it."
               />
               <div className="shrink-0 mt-1">
-                {showSaveCard && !IS_PRODUCTION && <TestCardHint />}
+                {!IS_PRODUCTION && <TestCardHint />}
               </div>
             </div>
 
-            <SavedCardsList
-              cards={savedCards}
-              loading={loading}
-              getJwt={getJwt}
-              email={userEmail}
-              registrations={registrations}
-              selectedCardId={selectedCardId}
-              onSelectCard={setSelectedCardId}
-              onDeleteCard={handleDeleteCard}
-              onAddCard={showSaveCard ? undefined : () => setShowSaveCard(true)}
-              onRegistrationComplete={fetchData}
-            />
+            <CardPickerSection key={cardPickerVersion} jwt={getJwt()} onCardSelected={handleCardSelected} />
 
-            {showSaveCard && (
+            {pickedCard && (
               <div className="mt-4">
-                <SaveCardSection
-                  jwt={getJwt()}
-                  onCardSaved={handleCardSaved}
-                  onCancel={() => setShowSaveCard(false)}
+                <SelectedCardRails
+                  card={pickedCard}
+                  registration={registrations[pickedCard.paymentMethodId] ?? null}
+                  getJwt={getJwt}
+                  email={userEmail}
+                  onDeleteCard={handleDeleteCard}
+                  onRegistrationComplete={fetchData}
                 />
               </div>
             )}
