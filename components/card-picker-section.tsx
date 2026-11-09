@@ -85,7 +85,7 @@ export function CardPickerSection({
   const busyLabel = selecting ? "Selecting card..." : "Saving card...";
 
   return (
-    <div className="space-y-3">
+    <div className="max-w-md space-y-3">
       <div className="relative">
         <CrossmintPaymentMethodManagement
           ref={cardFormRef}
