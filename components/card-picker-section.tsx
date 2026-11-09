@@ -16,6 +16,9 @@ import {
 
 // allowedModes travels in the iframe URL: a new array reloads the iframe, so it is a module constant.
 const ALLOWED_MODES: Array<"new" | "existing"> = ["new", "existing"];
+// fields travels in the iframe URL too. address: true collects a required billing address
+// (line2 optional); { line2: "required" | "hidden" } changes the second address line.
+const BILLING_ADDRESS_FIELDS = { billingDetails: { address: true } };
 
 function CardFormSkeleton() {
   return (
@@ -52,6 +55,7 @@ export function CardPickerSection({
   const [formState, setFormState] = useState<PaymentMethodManagementChangeEvent | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [collectBillingAddress, setCollectBillingAddress] = useState(false);
 
   const handleReady = useCallback(() => setReady(true), []);
   const handleChange = useCallback((event: PaymentMethodManagementChangeEvent) => {
@@ -64,6 +68,14 @@ export function CardPickerSection({
     (paymentMethod: CrossmintPaymentMethod) => onCardSelected(paymentMethod.paymentMethodId),
     [onCardSelected]
   );
+
+  // A change of fields reloads the iframe: wait for onReady again.
+  const toggleBillingAddress = (checked: boolean) => {
+    setCollectBillingAddress(checked);
+    setReady(false);
+    setFormState(null);
+    setSubmitError("");
+  };
 
   const submit = async () => {
     if (!cardFormRef.current) {
@@ -86,11 +98,21 @@ export function CardPickerSection({
 
   return (
     <div className="max-w-md space-y-3">
+      <label className="flex items-center gap-2 text-xs text-[#00150d]/70">
+        <input
+          type="checkbox"
+          checked={collectBillingAddress}
+          onChange={(event) => toggleBillingAddress(event.target.checked)}
+          className="accent-[#05B959]"
+        />
+        Collect billing address
+      </label>
       <div className="relative">
         <CrossmintPaymentMethodManagement
           ref={cardFormRef}
           jwt={jwt}
           allowedModes={ALLOWED_MODES}
+          fields={collectBillingAddress ? BILLING_ADDRESS_FIELDS : undefined}
           onReady={handleReady}
           onChange={handleChange}
           onPaymentMethodSelected={handlePaymentMethodSelected}
@@ -106,9 +128,9 @@ export function CardPickerSection({
           type="button"
           onClick={() => void submit()}
           disabled={!ready || !formState?.complete || submitting}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-white bg-[#05B959] hover:bg-[#049d4c] px-4 py-2 rounded-md disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          className="flex w-full items-center justify-center gap-2 h-11 rounded-lg bg-[#05B959] text-sm font-semibold text-white shadow-sm hover:bg-[#049d4c] active:bg-[#038a43] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#05B959]/40 focus-visible:ring-offset-2 disabled:bg-[#05B959]/45 disabled:shadow-none disabled:cursor-not-allowed transition-colors"
         >
-          {submitting && <Loader2 className="size-3.5 animate-spin" />}
+          {submitting && <Loader2 className="size-4 animate-spin" />}
           {submitting ? busyLabel : idleLabel}
         </button>
         {submitError && (
